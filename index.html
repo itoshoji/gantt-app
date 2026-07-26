@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>スケジュール管理</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <h1 class="app-title">スケジュール管理</h1>
+
+  <div class="scope-toggle" id="scopeToggle">
+    <button type="button" data-scope="work" class="is-active">仕事</button>
+    <button type="button" data-scope="private">プライベート</button>
+  </div>
+
+  <div class="view-toggle" id="viewToggle">
+    <button type="button" data-view="year" class="is-active">年</button>
+    <button type="button" data-view="quarter">四半期</button>
+    <button type="button" data-view="day">日</button>
+  </div>
+
+  <div class="range-nav" id="rangeNav">
+    <button id="prevRange" class="icon-btn" title="前へ">‹</button>
+    <span id="rangeLabel" class="range-label"></span>
+    <button id="nextRange" class="icon-btn" title="次へ">›</button>
+  </div>
+
+  <button id="addGroup" class="add-btn" title="項目を追加">＋</button>
+</header>
+
+<!-- ガントビュー（年 / 四半期） -->
+<main class="board" id="boardView">
+  <div class="row header-row">
+    <div class="head-cell">項目</div>
+    <div class="months" id="monthHeader"></div>
+  </div>
+  <div id="groupList"></div>
+  <p class="empty-hint" id="emptyHint">
+    右上の「＋」から項目（定例業務・プロジェクト）を追加してください。
+  </p>
+</main>
+
+<!-- 日ビュー（直近のToDo） -->
+<section class="todo" id="todoView" hidden></section>
+
+<!-- 項目の新規作成 -->
+<div class="overlay" id="groupDialog" hidden>
+  <div class="dialog">
+    <h2 class="dialog-title">項目を追加</h2>
+    <label class="field">
+      <span class="field-label">名前</span>
+      <input type="text" id="groupName" placeholder="例: マニフェスト精算" autocomplete="off">
+    </label>
+    <div class="field">
+      <span class="field-label">タグ</span>
+      <div class="tag-choice">
+        <button type="button" class="tag-btn is-active" data-tag="routine">定例</button>
+        <button type="button" class="tag-btn" data-tag="project">プロジェクト</button>
+      </div>
+    </div>
+    <div class="field">
+      <span class="field-label">色</span>
+      <div class="swatches" id="swatches"></div>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" id="groupCancel">キャンセル</button>
+      <button type="button" class="btn primary" id="groupSave">追加</button>
+    </div>
+  </div>
+</div>
+
+<!-- 月間カレンダー -->
+<div class="overlay" id="calendarOverlay" hidden>
+  <div class="dialog calendar-dialog">
+    <div class="calendar-head">
+      <button class="icon-btn" id="calPrev" title="前の月">‹</button>
+      <h2 class="dialog-title" id="calendarTitle"></h2>
+      <button class="icon-btn" id="calNext" title="次の月">›</button>
+      <button class="today-btn" id="calToday" title="今日を含む月へ">今日</button>
+      <span class="calendar-scope" id="calendarScope"></span>
+      <button class="icon-btn" id="calendarClose" title="閉じる">×</button>
+    </div>
+    <p class="calendar-hint" id="calendarHint"></p>
+    <div class="calendar" id="calendar"></div>
+  </div>
+</div>
+
+<!-- 中タスクの吹き出し -->
+<div class="popover" id="popover" hidden></div>
+
+<!-- 右クリックの小窓 -->
+<div class="context-menu" id="contextMenu" hidden></div>
+
+<!-- 並べ替え中の挿入位置 -->
+<div class="drop-line" id="dropLine" hidden></div>
+
+<script src="holidays.js"></script>
+<script src="store.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
