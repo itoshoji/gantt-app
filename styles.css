@@ -376,6 +376,11 @@ body {
 .overlay {
   position: fixed;
   inset: 0;
+  /* ガント表は横に長く、ページ全体の幅が画面より広くなる。
+     inset だけだとその広い幅を基準に中央寄せされ、狭い画面ではダイアログが
+     画面の外へはみ出してしまう。画面幅そのものに固定する。 */
+  width: 100vw;
+  height: 100dvh;
   background: rgba(15, 23, 42, .35);
   display: grid;
   place-items: center;
@@ -803,7 +808,7 @@ body {
 .logout-btn[hidden] { display: none; }
 
 .login-overlay { z-index: 300; }
-.login-dialog { width: 320px; }
+.login-dialog { width: min(320px, 100%); }
 .login-lead {
   margin: 0 0 16px;
   color: var(--muted);
