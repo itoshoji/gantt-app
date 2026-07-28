@@ -739,3 +739,50 @@ body {
   font-size: 13px;
   text-align: center;
 }
+
+/* ---------- 選択・切り取り中の見た目 ---------- */
+.cell.is-selected {
+  box-shadow: inset 0 0 0 2px var(--accent);
+  background: #eef5fb;
+}
+.bar.is-selected,
+.cal-bar.is-selected {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent);
+  z-index: 3;
+}
+.sub-item.is-selected { background: #eef5fb; border-radius: 6px; }
+
+.bar.is-cutting,
+.cal-bar.is-cutting { opacity: .45; }
+
+/* ---------- 小タスク行の削除ボタン ---------- */
+.sub-del {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.sub-del:hover { background: #fbeceb; color: var(--sun); }
+
+/* ---------- 項目行のカレンダーアイコン ---------- */
+.group-cal {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 2px;
+  border-radius: 5px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.group-cal:hover { background: #eef1f5; color: var(--text); }
+
+/* ---------- カレンダーの前後の月のマス ---------- */
+.cal-day.other-month { background: #fafbfc; }
+.cal-day.other-month .cal-date { color: #b9c0c9; font-size: 10px; }

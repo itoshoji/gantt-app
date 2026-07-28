@@ -82,6 +82,7 @@ const Store = (() => {
     startMonth: Number(r.start_month),
     endMonth: Number(r.end_month),
     name: r.name || '',
+    color: r.color || null,      // null なら親の項目の色を使う
   });
   const toSubtask = r => ({
     id: r.id,
@@ -97,7 +98,8 @@ const Store = (() => {
   });
   const taskRow = (t, order) => ({
     id: t.id, group_id: t.groupId, fy: t.fy,
-    start_month: t.startMonth, end_month: t.endMonth, name: t.name, sort_order: order,
+    start_month: t.startMonth, end_month: t.endMonth, name: t.name,
+    color: t.color || null, sort_order: order,
   });
   const subtaskRow = (s, order) => ({
     id: s.id, task_id: s.taskId, name: s.name,
@@ -107,7 +109,7 @@ const Store = (() => {
   // 部分更新（patch）のキー名をDBのカラム名に読み替える
   const TASK_COLS = {
     groupId: 'group_id', fy: 'fy', startMonth: 'start_month',
-    endMonth: 'end_month', name: 'name',
+    endMonth: 'end_month', name: 'name', color: 'color',
   };
   const SUBTASK_COLS = {
     taskId: 'task_id', name: 'name', startDate: 'start_date', endDate: 'end_date',
@@ -186,10 +188,58 @@ const Store = (() => {
     });
   }
 
+  // ---------- 元に戻す用（状態まるごとの保存・復元）----------
+  // 件数がたかだか数百なので、丸ごと控えて差分を出すほうが
+  // 操作ごとに逆操作を書くより単純で、取りこぼしがない。
+  const clone = o => JSON.parse(JSON.stringify(o));
+
+  // before → after の差分を求める。sort_order も含めて比較したいので行に変換して比べる
+  function diff(before, after, toRow) {
+    const beforeById = new Map(before.map((x, i) => [x.id, toRow(x, i)]));
+    const afterIds = new Set(after.map(x => x.id));
+    const inserts = [], updates = [], deletes = [];
+    after.forEach((x, i) => {
+      const row = toRow(x, i);
+      const prev = beforeById.get(x.id);
+      if (!prev) inserts.push(row);
+      else if (JSON.stringify(prev) !== JSON.stringify(row)) updates.push(row);
+    });
+    for (const x of before) if (!afterIds.has(x.id)) deletes.push(x.id);
+    return { inserts, updates, deletes };
+  }
+
+  function applyDiff(table, d) {
+    for (const row of d.inserts) insert(table, row);
+    for (const row of d.updates) {
+      const { id, ...rest } = row;
+      patch(table, id, rest);
+    }
+    for (const id of d.deletes) remove(table, id);
+  }
+
   return {
     init,
     set onError(fn) { onError = fn; },
     get onError() { return onError; },
+
+    // --- 元に戻す用 ---
+    snapshot: () => clone(state),
+    // 控えておいた状態に戻し、その差分だけをSupabaseへ送る。
+    // 外部キーの都合で「作成は親→子」「削除は子→親」の順に流す必要がある
+    restore(snap) {
+      const dg = diff(state.groups, snap.groups, groupRow);
+      const dt = diff(state.tasks, snap.tasks, taskRow);
+      const ds = diff(state.subtasks, snap.subtasks, subtaskRow);
+
+      applyDiff('groups', { inserts: dg.inserts, updates: dg.updates, deletes: [] });
+      applyDiff('tasks', { inserts: dt.inserts, updates: dt.updates, deletes: [] });
+      applyDiff('subtasks', { inserts: ds.inserts, updates: ds.updates, deletes: [] });
+      applyDiff('subtasks', { inserts: [], updates: [], deletes: ds.deletes });
+      applyDiff('tasks', { inserts: [], updates: [], deletes: dt.deletes });
+      applyDiff('groups', { inserts: [], updates: [], deletes: dg.deletes });
+
+      state = clone(snap);
+    },
 
     // --- 参照 ---
     groups: () => state.groups,
@@ -216,6 +266,10 @@ const Store = (() => {
     renameGroup(id, name) {
       const g = state.groups.find(x => x.id === id);
       if (g) { g.name = name; patch('groups', id, { name }); }
+    },
+    setGroupColor(id, color) {
+      const g = state.groups.find(x => x.id === id);
+      if (g) { g.color = color; patch('groups', id, { color }); }
     },
     setGroupHidden(id, hidden) {
       const g = state.groups.find(x => x.id === id);
@@ -244,8 +298,8 @@ const Store = (() => {
     },
 
     // --- 中タスク（月単位）---
-    addTask({ groupId, fy, startMonth, endMonth, name = '' }) {
-      const t = { id: uid(), groupId, fy, startMonth, endMonth, name };
+    addTask({ groupId, fy, startMonth, endMonth, name = '', color = null }) {
+      const t = { id: uid(), groupId, fy, startMonth, endMonth, name, color };
       state.tasks.push(t);
       insert('tasks', taskRow(t, state.tasks.length - 1));
       return t;

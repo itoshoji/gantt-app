@@ -10,11 +10,18 @@ const CAL_BAR_GAP = 2;
 const VIEW_KEY = 'gantt-app:view';
 const SCOPE_KEY = 'gantt-app:scope';
 
-const PALETTES = {
-  routine: ['#E05C43', '#F0A13B', '#D9455F', '#C77B3A', '#D4A017', '#B5526B'],
-  project: ['#3E7CB1', '#4BA3A3', '#6C6BC4', '#3E9B6E', '#5D8AA8', '#8E6BC4'],
-};
+// 項目の色は赤・青の2択だけ（種類の区別が一目で付けばよい、という方針）。
+// 細かい色分けは中タスク側で自由に付ける。
+const GROUP_COLORS = ['#D9455F', '#3E7CB1'];        // 赤 / 青
+const DEFAULT_GROUP_COLOR = { routine: GROUP_COLORS[0], project: GROUP_COLORS[1] };
 const TAG_LABEL = { routine: '定例', project: 'プロジェクト' };
+
+// Mac は Ctrl+クリックが右クリックなので、複製ドラッグに Ctrl を使えない。
+// OSごとの流儀に合わせる（Mac=Option / Windows=Ctrl）
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const isDuplicateDrag = e => (IS_MAC ? e.altKey : e.ctrlKey);
+// コピー等のショートカットは Cmd と Ctrl の両方を受ける
+const isCmd = e => e.metaKey || e.ctrlKey;
 
 const ICON = {
   eye: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
@@ -103,6 +110,11 @@ function hexToHsl(hex) {
   return { h, s: s * 100, l: l * 100 };
 }
 
+// 中タスクに個別の色が付いていればそれを、無ければ親の項目の色を使う
+function taskColor(t, g) {
+  return (t && t.color) || (g && g.color) || GROUP_COLORS[0];
+}
+
 // 小タスクが多いほど濃くなる（0個=淡い / 5個以上=項目の色そのもの）
 function barStyle(baseHex, subCount) {
   const { h, s, l } = hexToHsl(baseHex);
@@ -129,6 +141,188 @@ const groupListEl = $('groupList');
 const monthHeaderEl = $('monthHeader');
 const popoverEl = $('popover');
 const calEl = $('calendar');
+
+// ==========================================================
+// 元に戻す（Undo）
+// ==========================================================
+// 逆操作を1つずつ書くとどれかを書き忘れて戻らない、という事故が起きやすい。
+// 操作の直前に状態を丸ごと控えておき、戻すときは差分だけSupabaseへ送る方式にした。
+const History = (() => {
+  const stack = [];
+  const LIMIT = 50;
+  let depth = 0;
+
+  return {
+    // 1回の「操作」としてまとめたい処理を fn に入れて呼ぶ。
+    // 中で Store を何回叩いても、元に戻すときは1回で戻る。
+    act(label, fn) {
+      if (depth > 0) return fn();              // 入れ子は外側の1回にまとめる
+      const before = Store.snapshot();
+      depth++;
+      let result;
+      try {
+        result = fn();
+      } finally {
+        depth--;
+      }
+      // 何も変わっていないなら履歴に積まない（押しても何も起きないUndoを作らない）
+      if (JSON.stringify(before) !== JSON.stringify(Store.snapshot())) {
+        stack.push({ label, before });
+        if (stack.length > LIMIT) stack.shift();
+      }
+      return result;
+    },
+    canUndo: () => stack.length > 0,
+    lastLabel: () => (stack.length ? stack[stack.length - 1].label : null),
+    undo() {
+      const e = stack.pop();
+      if (!e) return null;
+      Store.restore(e.before);
+      return e.label;
+    },
+  };
+})();
+
+// ==========================================================
+// 選択状態とクリップボード
+// ==========================================================
+// selection: { kind:'cell', groupId, monthIdx } | { kind:'task', id } | { kind:'subtask', id }
+let selection = null;
+// clipboard: { mode:'copy'|'cut', kind:'task'|'subtask', data:… }
+let clipboard = null;
+
+function setSelection(sel) {
+  selection = sel;
+  paintSelection();
+}
+function clearSelection() { setSelection(null); }
+
+// 選択の見た目を当て直す（描画のたびに呼ぶ）
+function paintSelection() {
+  groupListEl.querySelectorAll('.is-selected').forEach(el => el.classList.remove('is-selected'));
+  calEl.querySelectorAll('.is-selected').forEach(el => el.classList.remove('is-selected'));
+  popoverEl.querySelectorAll('.is-selected').forEach(el => el.classList.remove('is-selected'));
+  if (!selection) return;
+
+  if (selection.kind === 'task') {
+    const b = findBar(selection.id);
+    if (b) b.classList.add('is-selected');
+  } else if (selection.kind === 'cell') {
+    const cell = groupListEl.querySelector(
+      `.group-row[data-group-id="${selection.groupId}"] .cell[data-month="${selection.monthIdx}"]`);
+    if (cell) cell.classList.add('is-selected');
+  } else if (selection.kind === 'subtask') {
+    calEl.querySelectorAll(`.cal-bar[data-sub-id="${selection.id}"]`)
+      .forEach(el => el.classList.add('is-selected'));
+    const li = popoverEl.querySelector(`.sub-item[data-id="${selection.id}"]`);
+    if (li) li.classList.add('is-selected');
+  }
+}
+
+// 切り取り中のものを薄く見せる
+function paintClipboard() {
+  groupListEl.querySelectorAll('.is-cutting').forEach(el => el.classList.remove('is-cutting'));
+  calEl.querySelectorAll('.is-cutting').forEach(el => el.classList.remove('is-cutting'));
+  if (!clipboard || clipboard.mode !== 'cut') return;
+  if (clipboard.kind === 'task') {
+    const b = findBar(clipboard.data.task.id);
+    if (b) b.classList.add('is-cutting');
+  } else {
+    calEl.querySelectorAll(`.cal-bar[data-sub-id="${clipboard.data.sub.id}"]`)
+      .forEach(el => el.classList.add('is-cutting'));
+  }
+}
+
+// 中タスクは配下の小タスクごと控える
+function putTaskOnClipboard(t, mode) {
+  clipboard = {
+    mode, kind: 'task',
+    data: { task: { ...t }, subs: Store.subtasksOf(t.id).map(s => ({ ...s })) },
+  };
+  paintClipboard();
+}
+function putSubtaskOnClipboard(s, mode) {
+  clipboard = { mode, kind: 'subtask', data: { sub: { ...s } } };
+  paintClipboard();
+}
+
+// 中タスクをセル（項目×月）へ貼る。ずれた月数だけ小タスクも一緒に動かす
+function pasteTaskAt(groupId, monthIdx) {
+  if (!clipboard || clipboard.kind !== 'task') return;
+  const { task, subs } = clipboard.data;
+  const mode = clipboard.mode;
+  const span = Math.min(task.endMonth - task.startMonth, 11);
+  const start = Math.min(Math.max(monthIdx, 0), 11 - span);
+  const end = start + span;
+
+  // 年度をまたいでも合うよう、実際の年月の差で移動量を出す
+  const from = idxToYM(task.fy, task.startMonth);
+  const to = idxToYM(fy, start);
+  const delta = absMonth(to.y, to.m) - absMonth(from.y, from.m);
+
+  History.act(mode === 'cut' ? '移動' : '貼り付け', () => {
+    if (mode === 'cut') {
+      Store.updateTask(task.id, { groupId, fy, startMonth: start, endMonth: end });
+      shiftSubtasks(task.id, delta);
+    } else {
+      const nt = Store.addTask({
+        groupId, fy, startMonth: start, endMonth: end,
+        name: task.name, color: task.color,
+      });
+      for (const s of subs) {
+        Store.addSubtask({
+          taskId: nt.id,
+          name: s.name,
+          startDate: s.startDate ? shiftDateByMonths(s.startDate, delta) : null,
+          endDate: s.endDate ? shiftDateByMonths(s.endDate, delta) : null,
+        });
+      }
+    }
+  });
+  if (mode === 'cut') clipboard = null;
+  clearSelection();
+  render();
+}
+
+// 小タスクをカレンダーの日付へ貼る。長さは保ったまま開始日だけ変える
+function pasteSubtaskAt(iso) {
+  if (!clipboard || clipboard.kind !== 'subtask') return;
+  const { sub } = clipboard.data;
+  const mode = clipboard.mode;
+  const len = sub.startDate && sub.endDate ? dayDiff(sub.startDate, sub.endDate) : 0;
+
+  History.act(mode === 'cut' ? '移動' : '貼り付け', () => {
+    if (mode === 'cut') {
+      Store.updateSubtask(sub.id, { startDate: iso, endDate: addDays(iso, len) });
+    } else {
+      Store.addSubtask({
+        taskId: sub.taskId, name: sub.name,
+        startDate: iso, endDate: addDays(iso, len),
+      });
+    }
+  });
+  if (mode === 'cut') clipboard = null;
+  render();
+  if (!$('calendarOverlay').hidden) renderCalendar();
+}
+
+function doUndo() {
+  if (!History.canUndo()) return;
+  History.undo();
+  clipboard = null;
+  clearSelection();
+  render();
+  if (!$('calendarOverlay').hidden) renderCalendar();
+}
+
+// 右クリックメニューの末尾に足す「元に戻す」
+function undoMenuItems() {
+  if (!History.canUndo()) return [];
+  return [
+    { separator: true },
+    { label: `元に戻す（${History.lastLabel()}）`, onClick: doUndo },
+  ];
+}
 
 // 表示している月の範囲（年度インデックス）
 function visibleRange() {
@@ -160,6 +354,8 @@ function render() {
   renderMonthHeader();
   renderGroups();
   if (popoverTaskId) renderPopoverBody();
+  paintSelection();
+  paintClipboard();
 }
 
 function applyViewMode() {
@@ -224,7 +420,22 @@ function renderGroups() {
     for (let i = vis.from; i <= vis.to; i++) {
       const c = document.createElement('div');
       c.className = 'cell' + (i === curIdx ? ' is-current' : '');
-      c.addEventListener('click', () => createTaskAt(g, i));
+      c.dataset.month = i;
+      // ワンクリックは選択だけ。作成はダブルクリック（コピー・貼り付けの的にするため）
+      c.addEventListener('click', () => setSelection({ kind: 'cell', groupId: g.id, monthIdx: i }));
+      c.addEventListener('dblclick', () => createTaskAt(g, i));
+      c.addEventListener('contextmenu', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelection({ kind: 'cell', groupId: g.id, monthIdx: i });
+        const items = [
+          { label: 'ここに中タスクを作る', onClick: () => createTaskAt(g, i) },
+        ];
+        if (clipboard && clipboard.kind === 'task') {
+          items.push({ label: '貼り付け', onClick: () => pasteTaskAt(g.id, i) });
+        }
+        openContextMenu(e, `${g.name} / ${MONTH_LABELS[i]}`, items.concat(undoMenuItems()));
+      });
       cells.appendChild(c);
     }
     lanes.appendChild(cells);
@@ -268,26 +479,52 @@ function buildGroupHead(g, row) {
   meta.append(nameEl, tagEl);
   head.appendChild(meta);
 
+  // この項目に属する小タスクだけをカレンダーで見る
+  const cal = document.createElement('button');
+  cal.className = 'group-cal';
+  cal.type = 'button';
+  cal.innerHTML = ICON.calendar;
+  cal.title = 'この項目の予定をカレンダーで見る';
+  cal.addEventListener('click', () => openCalendarForGroup(g));
+  head.appendChild(cal);
+
   const eye = document.createElement('button');
   eye.className = 'group-eye';
   eye.type = 'button';
   eye.innerHTML = g.hidden ? ICON.eyeOff : ICON.eye;
   eye.title = g.hidden ? 'カレンダーに表示する' : 'カレンダーから隠す';
-  eye.addEventListener('click', () => { Store.setGroupHidden(g.id, !g.hidden); render(); });
+  eye.addEventListener('click', () => {
+    History.act('表示の切り替え', () => Store.setGroupHidden(g.id, !g.hidden));
+    render();
+  });
   head.appendChild(eye);
 
   head.addEventListener('contextmenu', e => {
     e.preventDefault();
+    const toRed = g.color !== GROUP_COLORS[0];
     openContextMenu(e, g.name, [
       { label: '名前を変更', onClick: () => editGroupName(head.querySelector('.group-name'), g) },
+      { label: 'カレンダーで見る', onClick: () => openCalendarForGroup(g) },
+      {
+        label: toRed ? '色を赤にする' : '色を青にする',
+        onClick: () => {
+          History.act('色の変更', () =>
+            Store.setGroupColor(g.id, toRed ? GROUP_COLORS[0] : GROUP_COLORS[1]));
+          render();
+        },
+      },
       {
         label: g.hidden ? 'カレンダーに表示する' : 'カレンダーから隠す',
-        onClick: () => { Store.setGroupHidden(g.id, !g.hidden); render(); },
+        onClick: () => {
+          History.act('表示の切り替え', () => Store.setGroupHidden(g.id, !g.hidden));
+          render();
+        },
       },
       {
         label: `${SCOPE_LABEL[g.scope === 'work' ? 'private' : 'work']}へ移動`,
         onClick: () => {
-          Store.setGroupScope(g.id, g.scope === 'work' ? 'private' : 'work');
+          History.act('移動', () =>
+            Store.setGroupScope(g.id, g.scope === 'work' ? 'private' : 'work'));
           hidePopover();
           render();
         },
@@ -295,9 +532,14 @@ function buildGroupHead(g, row) {
       { separator: true },
       {
         label: '削除（中の予定ごと）', danger: true,
-        onClick: () => { Store.deleteGroup(g.id); hidePopover(); render(); },
+        onClick: () => {
+          History.act('削除', () => Store.deleteGroup(g.id));
+          hidePopover();
+          clearSelection();
+          render();
+        },
       },
-    ]);
+    ].concat(undoMenuItems()));
   });
 
   return head;
@@ -320,7 +562,7 @@ function applyBarGeometry(bar, startMonth, endMonth, vis) {
 
 function createBar(t, g, lane, vis) {
   const subCount = Store.subtasksOf(t.id).length;
-  const { bg, fg } = barStyle(g.color, subCount);
+  const { bg, fg } = barStyle(taskColor(t, g), subCount);
 
   const bar = document.createElement('div');
   bar.className = 'bar';
@@ -365,17 +607,62 @@ function createBar(t, g, lane, vis) {
   }
 
   bar.addEventListener('pointerdown', e => startBarDrag(e, t, bar, vis));
+  // 小タスク一覧を開くのはダブルクリック（ワンクリックは選択に譲った）
+  bar.addEventListener('dblclick', e => {
+    e.stopPropagation();
+    showPopover(t.id, bar);
+  });
   bar.addEventListener('contextmenu', e => {
     e.preventDefault();
     e.stopPropagation();
-    openContextMenu(e, t.name || '（無題）', [
+    setSelection({ kind: 'task', id: t.id });
+    const items = [
       { label: '名前を変更', onClick: () => { render(); const b = findBar(t.id); if (b) startNameEdit(b, Store.task(t.id)); } },
+      { label: '小タスクを開く', onClick: () => { const b = findBar(t.id); if (b) showPopover(t.id, b); } },
       { label: 'カレンダーで見る', onClick: () => openCalendar({ ...idxToYM(t.fy, t.startMonth), taskId: t.id }) },
+      { label: '色を変更', onClick: () => pickTaskColor(t, g) },
       { separator: true },
-      { label: '削除', danger: true, onClick: () => { if (popoverTaskId === t.id) hidePopover(); Store.deleteTask(t.id); render(); } },
-    ]);
+      { label: 'コピー', onClick: () => putTaskOnClipboard(t, 'copy') },
+      { label: '切り取り', onClick: () => putTaskOnClipboard(t, 'cut') },
+    ];
+    if (clipboard && clipboard.kind === 'task') {
+      items.push({ label: '貼り付け', onClick: () => pasteTaskAt(t.groupId, t.startMonth) });
+    }
+    items.push({ separator: true });
+    items.push({
+      label: '削除', danger: true,
+      onClick: () => History.act('削除', () => {
+        if (popoverTaskId === t.id) hidePopover();
+        Store.deleteTask(t.id);
+        clearSelection();
+        render();
+      }),
+    });
+    openContextMenu(e, t.name || '（無題）', items.concat(undoMenuItems()));
   });
   return bar;
+}
+
+// 色を選ばせる小さな仕掛け。<input type="color"> をその場に置いて開く
+function openColorPicker(current, onPick) {
+  const input = document.createElement('input');
+  input.type = 'color';
+  input.value = current || '#3E7CB1';
+  input.style.cssText = 'position:fixed;left:-9999px;top:0;';
+  document.body.appendChild(input);
+  input.addEventListener('change', () => {
+    onPick(input.value);
+    input.remove();
+  });
+  input.addEventListener('blur', () => setTimeout(() => input.remove(), 200));
+  input.click();
+}
+
+function pickTaskColor(t, g) {
+  openColorPicker(taskColor(t, g), hex => {
+    History.act('色の変更', () => Store.updateTask(t.id, { color: hex }));
+    render();
+  });
 }
 
 const findBar = taskId => groupListEl.querySelector(`.bar[data-task-id="${taskId}"]`);
@@ -395,7 +682,7 @@ function editGroupName(span, g) {
     if (done) return;
     done = true;
     const v = input.value.trim();
-    if (v) Store.renameGroup(g.id, v);
+    if (v && v !== g.name) History.act('名前の変更', () => Store.renameGroup(g.id, v));
     render();
   };
   input.addEventListener('blur', commit);
@@ -441,7 +728,8 @@ function startGroupDrag(e, row) {
     row.classList.remove('is-reordering');
     if (insertAt !== from && insertAt !== from + 1) {
       const before = rows[insertAt];
-      Store.moveGroupBefore(row.dataset.groupId, before ? before.dataset.groupId : null);
+      History.act('並べ替え', () =>
+        Store.moveGroupBefore(row.dataset.groupId, before ? before.dataset.groupId : null));
     }
     render();
   };
@@ -455,7 +743,9 @@ function startGroupDrag(e, row) {
 // ==========================================================
 function createTaskAt(g, monthIdx) {
   hidePopover();
-  const t = Store.addTask({ groupId: g.id, fy, startMonth: monthIdx, endMonth: monthIdx });
+  const t = History.act('中タスクの作成', () =>
+    Store.addTask({ groupId: g.id, fy, startMonth: monthIdx, endMonth: monthIdx }));
+  setSelection({ kind: 'task', id: t.id });
   render();
   const bar = findBar(t.id);
   if (bar) startNameEdit(bar, t);
@@ -478,7 +768,9 @@ function startNameEdit(bar, t) {
     done = true;
     const v = input.value.trim();
     if (!v && !t.name) Store.deleteTask(t.id);          // 名前を入れずに終了 → 作成をなかったことに
-    else if (!cancel && v) Store.updateTask(t.id, { name: v });
+    else if (!cancel && v && v !== t.name) {
+      History.act('名前の変更', () => Store.updateTask(t.id, { name: v }));
+    }
     render();
   };
   input.addEventListener('blur', () => finish(false));
@@ -530,6 +822,7 @@ function startBarDrag(e, t, bar, vis) {
   e.stopPropagation();
 
   const mode = e.target.dataset.side ? 'resize-' + e.target.dataset.side : 'move';
+  const duplicating = mode === 'move' && isDuplicateDrag(e);   // Mac=⌥ / Win=Ctrl で複製
   const lanesEl = bar.closest('.lanes');
   const count = vis.to - vis.from + 1;
   const cellW = lanesEl.getBoundingClientRect().width / count;
@@ -564,11 +857,34 @@ function startBarDrag(e, t, bar, vis) {
     bar.removeEventListener('pointermove', onMove);
     bar.removeEventListener('pointerup', onUp);
     bar.classList.remove('is-dragging');
-    if (!moved) { showPopover(t.id, bar); return; }
+    // 動かさずに離しただけなら「選択」。開くのはダブルクリック
+    if (!moved) { setSelection({ kind: 'task', id: t.id }); return; }
+
     if (next.s !== orig.s || next.e !== orig.e) {
-      Store.updateTask(t.id, { startMonth: next.s, endMonth: next.e });
-      if (mode === 'move') shiftSubtasks(t.id, next.s - orig.s);
-      else gatherStraySubtasks(Store.task(t.id));
+      if (duplicating) {
+        History.act('複製', () => {
+          const nt = Store.addTask({
+            groupId: t.groupId, fy: t.fy,
+            startMonth: next.s, endMonth: next.e,
+            name: t.name, color: t.color,
+          });
+          const delta = next.s - orig.s;
+          for (const s of Store.subtasksOf(t.id)) {
+            Store.addSubtask({
+              taskId: nt.id, name: s.name,
+              startDate: s.startDate ? shiftDateByMonths(s.startDate, delta) : null,
+              endDate: s.endDate ? shiftDateByMonths(s.endDate, delta) : null,
+            });
+          }
+          setSelection({ kind: 'task', id: nt.id });
+        });
+      } else {
+        History.act(mode === 'move' ? '移動' : '期間の変更', () => {
+          Store.updateTask(t.id, { startMonth: next.s, endMonth: next.e });
+          if (mode === 'move') shiftSubtasks(t.id, next.s - orig.s);
+          else gatherStraySubtasks(Store.task(t.id));
+        });
+      }
     }
     render();
   };
@@ -704,12 +1020,19 @@ function createTodoItem(x) {
   el.addEventListener('contextmenu', e => {
     e.preventDefault();
     e.stopPropagation();
+    setSelection({ kind: 'subtask', id: s.id });
     openContextMenu(e, s.name || '（無題）', [
       { label: '名前を変更', onClick: () => renameInline(name, s.id) },
       { label: 'カレンダーで見る', onClick: open },
       { separator: true },
-      { label: '削除', danger: true, onClick: () => { Store.deleteSubtask(s.id); render(); } },
-    ]);
+      { label: 'コピー', onClick: () => putSubtaskOnClipboard(s, 'copy') },
+      { label: '切り取り', onClick: () => putSubtaskOnClipboard(s, 'cut') },
+      { separator: true },
+      {
+        label: '削除', danger: true,
+        onClick: () => { History.act('削除', () => Store.deleteSubtask(s.id)); clearSelection(); render(); },
+      },
+    ].concat(undoMenuItems()));
   });
 
   return el;
@@ -731,7 +1054,8 @@ function renameInline(host, subId) {
   const commit = () => {
     if (done) return;
     done = true;
-    Store.updateSubtask(subId, { name: input.value.trim() });
+    const v = input.value.trim();
+    if (v !== s.name) History.act('名前の変更', () => Store.updateSubtask(subId, { name: v }));
     render();
     if (!$('calendarOverlay').hidden) renderCalendar();
   };
@@ -815,7 +1139,7 @@ function renderPopoverBody() {
   for (const s of subs) list.appendChild(createSubItem(s, g, t));
 
   popoverEl.querySelector('.pop-add').addEventListener('click', () => {
-    const s = Store.addSubtask({ taskId: t.id });
+    const s = History.act('小タスクの追加', () => Store.addSubtask({ taskId: t.id }));
     renderGroups();
     renderPopoverBody();
     const input = popoverEl.querySelector(`.sub-item[data-id="${s.id}"] .sub-name`);
@@ -837,14 +1161,30 @@ function createSubItem(s, g, t) {
   li.className = 'sub-item';
   li.dataset.id = s.id;
   li.innerHTML = `
-    <span class="sub-dot" style="background:${g.color}"></span>
+    <span class="sub-dot" style="background:${taskColor(t, g)}"></span>
     <input class="sub-name" type="text" placeholder="小タスク名">
-    <span class="sub-date${s.startDate ? '' : ' unset'}"></span>`;
+    <span class="sub-date${s.startDate ? '' : ' unset'}"></span>
+    <button type="button" class="sub-del" title="削除">×</button>`;
 
   const name = li.querySelector('.sub-name');
   name.value = s.name;
-  name.addEventListener('change', () => Store.updateSubtask(s.id, { name: name.value.trim() }));
+  name.addEventListener('change', () => {
+    const v = name.value.trim();
+    if (v !== s.name) History.act('名前の変更', () => Store.updateSubtask(s.id, { name: v }));
+  });
   name.addEventListener('keydown', e => { if (e.key === 'Enter') name.blur(); });
+
+  // ✕ はワンクリックで即削除（確認なし。戻したいときは Cmd+Z）
+  li.querySelector('.sub-del').addEventListener('click', e => {
+    e.stopPropagation();
+    History.act('削除', () => Store.deleteSubtask(s.id));
+    clearSelection();
+    renderGroups();
+    renderPopoverBody();
+    if (!$('calendarOverlay').hidden) renderCalendar();
+  });
+
+  li.addEventListener('click', () => setSelection({ kind: 'subtask', id: s.id }));
 
   const date = li.querySelector('.sub-date');
   date.textContent = rangeText(s);
@@ -857,15 +1197,24 @@ function createSubItem(s, g, t) {
   li.addEventListener('contextmenu', e => {
     e.preventDefault();
     e.stopPropagation();
+    setSelection({ kind: 'subtask', id: s.id });
     openContextMenu(e, s.name || '（無題）', [
       { label: '名前を変更', onClick: () => { name.focus(); name.select(); } },
       { label: 'カレンダーで見る', onClick: open },
       { separator: true },
+      { label: 'コピー', onClick: () => putSubtaskOnClipboard(s, 'copy') },
+      { label: '切り取り', onClick: () => putSubtaskOnClipboard(s, 'cut') },
+      { separator: true },
       {
         label: '削除', danger: true,
-        onClick: () => { Store.deleteSubtask(s.id); renderGroups(); renderPopoverBody(); },
+        onClick: () => {
+          History.act('削除', () => Store.deleteSubtask(s.id));
+          clearSelection();
+          renderGroups();
+          renderPopoverBody();
+        },
       },
-    ]);
+    ].concat(undoMenuItems()));
   });
   return li;
 }
@@ -928,14 +1277,17 @@ window.addEventListener('resize', closeContextMenu);
 let calY = today.getFullYear();
 let calM = today.getMonth() + 1;
 let calFilterTaskId = null;   // 指定があればその中タスクの小タスクだけ表示
+let calFilterGroupId = null;  // 指定があればその項目に属する小タスクだけ表示
 let calSelectFor = null;      // 小タスクIDが入っていれば「期間を新規選択するモード」
 let calSelection = null;      // 選択中の日付 {a, b}
 let calPreview = null;        // ドラッグ中の仮の期間 {id, from, to}
+let calGrid = { start: null, end: null };  // 画面に出ている7×n日の範囲（前後の月を含む）
 
-function openCalendar({ y, m, taskId = null, selectFor = null }) {
+function openCalendar({ y, m, taskId = null, groupId = null, selectFor = null }) {
   calY = y;
   calM = m;
   calFilterTaskId = taskId;
+  calFilterGroupId = groupId;
   calSelectFor = selectFor;
   calSelection = null;
   calPreview = null;
@@ -944,9 +1296,24 @@ function openCalendar({ y, m, taskId = null, selectFor = null }) {
   renderCalendar();
 }
 
+// 項目の行のカレンダーアイコンから開く（その項目の小タスクを全部見せる）
+function openCalendarForGroup(g) {
+  const tasks = Store.tasksOf(g.id, fy);
+  const subs = tasks.flatMap(t => Store.subtasksOf(t.id)).filter(s => s.startDate);
+  // 予定があればその一番早い月、なければ今日の月を開く
+  let y = today.getFullYear(), m = today.getMonth() + 1;
+  if (subs.length) {
+    const earliest = subs.reduce((a, b) => (dateNum(a.startDate) <= dateNum(b.startDate) ? a : b));
+    const p = parseDate(earliest.startDate);
+    y = p.y; m = p.m;
+  }
+  openCalendar({ y, m, groupId: g.id });
+}
+
 function closeCalendar() {
   $('calendarOverlay').hidden = true;
   calFilterTaskId = null;
+  calFilterGroupId = null;
   calSelectFor = null;
   calSelection = null;
   calPreview = null;
@@ -989,10 +1356,12 @@ function scrollTodayIntoView() {
   }
 }
 
-// カレンダーに出す小タスクを集める
+// カレンダーに出す小タスクを集める。
+// 判定は「今の月」ではなく「画面に出ている7×n日ぶん」で行う。
+// こうしないと月をまたぐ予定が前後の月のマスに描けない。
 function calendarItems() {
-  const monthStart = dateNum(ymd(calY, calM, 1));
-  const monthEnd = dateNum(ymd(calY, calM, daysInMonth(calY, calM)));
+  const from = dateNum(calGrid.start);
+  const to = dateNum(calGrid.end);
 
   return Store.allSubtasks()
     .filter(s => s.startDate)
@@ -1007,7 +1376,8 @@ function calendarItems() {
     .filter(x =>
       inScope(x.g) && !x.g.hidden &&
       (!calFilterTaskId || x.s.taskId === calFilterTaskId) &&
-      dateNum(x.to) >= monthStart && dateNum(x.from) <= monthEnd);
+      (!calFilterGroupId || (x.t && x.t.groupId === calFilterGroupId)) &&
+      dateNum(x.to) >= from && dateNum(x.from) <= to);
 }
 
 function renderCalendar() {
@@ -1018,11 +1388,15 @@ function renderCalendar() {
 
   const scope = $('calendarScope');
   const filterTask = calFilterTaskId ? Store.task(calFilterTaskId) : null;
-  scope.textContent = filterTask ? `${filterTask.name || '（無題）'} のみ` : '';
+  const filterGroup = calFilterGroupId ? Store.group(calFilterGroupId) : null;
+  scope.textContent = filterTask ? `${filterTask.name || '（無題）'} のみ`
+    : filterGroup ? `${filterGroup.name} のみ` : '';
 
   $('calendarHint').textContent = calSelectFor
     ? 'カレンダー上をドラッグして期間を選んでください（1日だけならクリック）'
-    : '予定をドラッグで移動、左右の端をドラッグで伸縮できます。右クリックでメニュー。';
+    : canAddSubtaskHere()
+      ? '空いているところをダブルクリックで追加。ドラッグで移動、端で伸縮。右クリックでメニュー。'
+      : '予定をドラッグで移動、左右の端をドラッグで伸縮できます。右クリックでメニュー。';
 
   calEl.innerHTML = '';
 
@@ -1038,10 +1412,13 @@ function renderCalendar() {
 
   const last = daysInMonth(calY, calM);
   const first = ymd(calY, calM, 1);
-  const lastIso = ymd(calY, calM, last);
   const lead = firstDow(calY, calM);
   const gridStart = addDays(first, -lead);
   const weekCount = Math.ceil((lead + last) / 7);
+
+  // 前後の月にはみ出したマスも「本物の日付」として扱う。
+  // これで年末年始のように月をまたぐ予定も作れる・動かせる。
+  calGrid = { start: gridStart, end: addDays(gridStart, weekCount * 7 - 1) };
 
   const items = calendarItems();
 
@@ -1053,8 +1430,9 @@ function renderCalendar() {
     // （前の週から続くものは週頭から始まるので、自然と上の段に並ぶ）
     const segs = [];
     for (const it of items) {
-      const from = Math.max(ord(it.from), ord(weekStart), ord(first));
-      const to = Math.min(ord(it.to), ord(weekEnd), ord(lastIso));
+      // 月の端で切らない。週の端だけで切る（月をまたぐバーをそのまま描くため）
+      const from = Math.max(ord(it.from), ord(weekStart));
+      const to = Math.min(ord(it.to), ord(weekEnd));
       if (from > to) continue;
       segs.push({ it, from, to });
     }
@@ -1071,20 +1449,20 @@ function renderCalendar() {
     for (let c = 0; c < 7; c++) {
       const iso = addDays(weekStart, c);
       const p = parseDate(iso);
+      const outside = p.y !== calY || p.m !== calM;
+      const kind = dayKind(iso);
       const cell = document.createElement('div');
-      if (p.y !== calY || p.m !== calM) {
-        cell.className = 'cal-day blank';
-      } else {
-        const kind = dayKind(iso);
-        cell.className = 'cal-day' + (kind ? ' is-' + kind : '') + (iso === TODAY ? ' is-today' : '');
-        cell.dataset.date = iso;
-        const holiday = Holidays.name(iso);
-        if (holiday) cell.title = holiday;
-        const num = document.createElement('span');
-        num.className = 'cal-date';
-        num.textContent = p.d;
-        cell.appendChild(num);
-      }
+      cell.className = 'cal-day'
+        + (kind ? ' is-' + kind : '')
+        + (iso === TODAY ? ' is-today' : '')
+        + (outside ? ' other-month' : '');
+      cell.dataset.date = iso;      // 前後の月のマスにも日付を持たせる
+      const holiday = Holidays.name(iso);
+      if (holiday) cell.title = holiday;
+      const num = document.createElement('span');
+      num.className = 'cal-date';
+      num.textContent = outside ? `${p.m}/${p.d}` : p.d;
+      cell.appendChild(num);
       days.appendChild(cell);
     }
     week.appendChild(days);
@@ -1113,7 +1491,8 @@ function createCalBar(seg, weekStart) {
     + (contLeft ? ' cont-left' : '')
     + (contRight ? ' cont-right' : '')
     + (calPreview && calPreview.id === it.s.id ? ' is-ghost' : '');
-  const st = barStyle(it.g.color, 5);
+  bar.dataset.subId = it.s.id;
+  const st = barStyle(taskColor(it.t, it.g), 5);
   bar.style.background = st.bg;
   bar.style.color = st.fg;
   bar.style.left = `calc(${(startCol / 7) * 100}% + ${insL}px)`;
@@ -1133,22 +1512,70 @@ function createCalBar(seg, weekStart) {
   bar.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
     const grabbed = addDays(weekStart, startCol);
-    startCalBarDrag(e, it.s.id, e.target.dataset.side || 'move', grabbed);
+    const side = e.target.dataset.side || 'move';
+    startCalBarDrag(e, it.s.id, side, grabbed, side === 'move' && isDuplicateDrag(e));
   });
 
   bar.addEventListener('contextmenu', e => {
     e.preventDefault();
     e.stopPropagation();
-    openContextMenu(e, it.s.name || '（無題）', [
+    setSelection({ kind: 'subtask', id: it.s.id });
+    const items = [
       { label: '名前を変更', onClick: () => renameInline(label, it.s.id) },
       { separator: true },
-      {
-        label: '削除', danger: true,
-        onClick: () => { Store.deleteSubtask(it.s.id); renderCalendar(); render(); },
+      { label: 'コピー', onClick: () => putSubtaskOnClipboard(it.s, 'copy') },
+      { label: '切り取り', onClick: () => putSubtaskOnClipboard(it.s, 'cut') },
+    ];
+    if (clipboard && clipboard.kind === 'subtask') {
+      items.push({ label: 'ここに貼り付け', onClick: () => pasteSubtaskAt(it.from) });
+    }
+    items.push({ separator: true });
+    items.push({
+      label: '削除', danger: true,
+      onClick: () => {
+        History.act('削除', () => Store.deleteSubtask(it.s.id));
+        clearSelection();
+        renderCalendar();
+        render();
       },
-    ]);
+    });
+    openContextMenu(e, it.s.name || '（無題）', items.concat(undoMenuItems()));
   });
   return bar;
+}
+
+// このカレンダーで小タスクを新規に足せるか（足す先の中タスクが決まるか）
+function canAddSubtaskHere() {
+  if (calFilterTaskId) return true;
+  if (calFilterGroupId) return Store.tasksOf(calFilterGroupId, fy).length > 0;
+  return false;
+}
+
+// 空いているマスのダブルクリックで小タスクを作る
+function addSubtaskOnDate(iso) {
+  let taskId = calFilterTaskId;
+  if (!taskId && calFilterGroupId) {
+    // 項目単位で開いているときは、その日を含む中タスクを優先して選ぶ
+    const p = parseDate(iso);
+    const a = absMonth(p.y, p.m);
+    const tasks = Store.tasksOf(calFilterGroupId, fy);
+    if (!tasks.length) return;
+    const hit = tasks.find(t => {
+      const r = taskAbsRange(t);
+      return a >= r.from && a <= r.to;
+    });
+    taskId = (hit || tasks[0]).id;
+  }
+  if (!taskId) return;
+
+  const s = History.act('小タスクの追加', () =>
+    Store.addSubtask({ taskId, startDate: iso, endDate: iso }));
+  setSelection({ kind: 'subtask', id: s.id });
+  renderCalendar();
+  render();
+  // 作った直後に名前を入れられるようにする
+  const bar = calEl.querySelector(`.cal-bar[data-sub-id="${s.id}"] .cal-bar-label`);
+  if (bar) renameInline(bar, s.id);
 }
 
 function calHandle(side) {
@@ -1158,22 +1585,21 @@ function calHandle(side) {
   return h;
 }
 
-// 画面上の座標から、カレンダーのどの日かを求める
+// 画面上の座標から、カレンダーのどの日かを求める。
+// 前後の月のマスも有効な日付として返す（月をまたいでドラッグできるようにするため）
 function dateAtPoint(x, y) {
   for (const week of calEl.querySelectorAll('.cal-week')) {
     const r = week.getBoundingClientRect();
     if (y < r.top || y > r.bottom) continue;
     const col = Math.floor((x - r.left) / (r.width / 7));
     if (col < 0 || col > 6) return null;
-    const iso = addDays(week.dataset.weekStart, col);
-    const p = parseDate(iso);
-    return (p.y === calY && p.m === calM) ? iso : null;
+    return addDays(week.dataset.weekStart, col);
   }
   return null;
 }
 
 // カレンダー上の予定バーのドラッグ（本体=移動 / 左右の端=伸縮）
-function startCalBarDrag(e, subId, mode, grabbedDay) {
+function startCalBarDrag(e, subId, mode, grabbedDay, duplicating = false) {
   e.preventDefault();
   e.stopPropagation();
   const s = Store.subtask(subId);
@@ -1209,7 +1635,20 @@ function startCalBarDrag(e, subId, mode, grabbedDay) {
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
     calPreview = null;
-    if (moved) Store.updateSubtask(subId, { startDate: next.from, endDate: next.to });
+    if (!moved) setSelection({ kind: 'subtask', id: subId });
+    if (moved) {
+      if (duplicating) {
+        History.act('複製', () => {
+          const ns = Store.addSubtask({
+            taskId: s.taskId, name: s.name, startDate: next.from, endDate: next.to,
+          });
+          setSelection({ kind: 'subtask', id: ns.id });
+        });
+      } else {
+        History.act(mode === 'move' ? '移動' : '期間の変更', () =>
+          Store.updateSubtask(subId, { startDate: next.from, endDate: next.to }));
+      }
+    }
     renderCalendar();
     if (viewMode === 'day') renderDayView(); else renderGroups();
     if (popoverTaskId) renderPopoverBody();
@@ -1256,7 +1695,9 @@ function startCalBarDrag(e, subId, mode, grabbedDay) {
     dragging = false;
     const { a, b } = calSelection;
     const asc = dateNum(a) <= dateNum(b);
-    Store.updateSubtask(calSelectFor, { startDate: asc ? a : b, endDate: asc ? b : a });
+    const target = calSelectFor;
+    History.act('期間の設定', () =>
+      Store.updateSubtask(target, { startDate: asc ? a : b, endDate: asc ? b : a }));
     calSelectFor = null;      // 以降はバーを直接ドラッグして調整できる
     calSelection = null;
     renderCalendar();
@@ -1264,6 +1705,36 @@ function startCalBarDrag(e, subId, mode, grabbedDay) {
   });
 
   calEl.addEventListener('pointerleave', () => { dragging = false; });
+
+  // 空いているマスの操作（バーの上はバー側のハンドラが先に止める）
+  calEl.addEventListener('dblclick', e => {
+    if (e.target.closest('.cal-bar')) return;
+    const iso = dateAtPoint(e.clientX, e.clientY);
+    if (!iso) return;
+    if (!canAddSubtaskHere()) {
+      $('calendarHint').textContent =
+        '中タスクまたは項目のカレンダーアイコンから開くと、ここに予定を追加できます。';
+      return;
+    }
+    addSubtaskOnDate(iso);
+  });
+
+  calEl.addEventListener('contextmenu', e => {
+    if (e.target.closest('.cal-bar')) return;   // バーの上は専用メニュー
+    const iso = dateAtPoint(e.clientX, e.clientY);
+    if (!iso) return;
+    e.preventDefault();
+    const { m, d } = parseDate(iso);
+    const items = [];
+    if (canAddSubtaskHere()) {
+      items.push({ label: 'ここに予定を追加', onClick: () => addSubtaskOnDate(iso) });
+    }
+    if (clipboard && clipboard.kind === 'subtask') {
+      items.push({ label: '貼り付け', onClick: () => pasteSubtaskAt(iso) });
+    }
+    if (!items.length && !History.canUndo()) return;
+    openContextMenu(e, `${m}月${d}日`, items.concat(undoMenuItems()));
+  });
 })();
 
 $('calPrev').addEventListener('click', () => shiftCalendarMonth(-1));
@@ -1278,12 +1749,12 @@ $('calendarOverlay').addEventListener('pointerdown', e => {
 // 項目の追加ダイアログ
 // ==========================================================
 let dlgTag = 'routine';
-let dlgColor = PALETTES.routine[0];
+let dlgColor = DEFAULT_GROUP_COLOR.routine;
 
 function renderSwatches() {
   const wrap = $('swatches');
   wrap.innerHTML = '';
-  PALETTES[dlgTag].forEach(c => {
+  GROUP_COLORS.forEach(c => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'swatch' + (c === dlgColor ? ' is-active' : '');
@@ -1297,7 +1768,7 @@ function openGroupDialog() {
   $('groupDialog').querySelector('.dialog-title').textContent =
     `${SCOPE_LABEL[scopeMode]}の項目を追加`;
   dlgTag = 'routine';
-  dlgColor = PALETTES.routine[0];
+  dlgColor = DEFAULT_GROUP_COLOR.routine;
   $('groupName').value = '';
   document.querySelectorAll('.tag-btn').forEach(b => b.classList.toggle('is-active', b.dataset.tag === dlgTag));
   renderSwatches();
@@ -1308,7 +1779,7 @@ function openGroupDialog() {
 document.querySelectorAll('.tag-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     dlgTag = btn.dataset.tag;
-    dlgColor = PALETTES[dlgTag][0];
+    dlgColor = DEFAULT_GROUP_COLOR[dlgTag];
     document.querySelectorAll('.tag-btn').forEach(b => b.classList.toggle('is-active', b === btn));
     renderSwatches();
   });
@@ -1317,7 +1788,8 @@ document.querySelectorAll('.tag-btn').forEach(btn => {
 function saveGroup() {
   const name = $('groupName').value.trim();
   if (!name) { $('groupName').focus(); return; }
-  Store.addGroup({ name, tag: dlgTag, color: dlgColor, scope: scopeMode });
+  History.act('項目の追加', () =>
+    Store.addGroup({ name, tag: dlgTag, color: dlgColor, scope: scopeMode }));
   $('groupDialog').hidden = true;
   render();
 }
@@ -1368,11 +1840,59 @@ $('nextRange').addEventListener('click', () => {
 });
 
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape') return;
-  if (!menuEl.hidden) closeContextMenu();
-  else if (!$('calendarOverlay').hidden) closeCalendar();
-  else if (!$('groupDialog').hidden) $('groupDialog').hidden = true;
-  else hidePopover();
+  if (e.key === 'Escape') {
+    if (!menuEl.hidden) closeContextMenu();
+    else if (!$('calendarOverlay').hidden) closeCalendar();
+    else if (!$('groupDialog').hidden) $('groupDialog').hidden = true;
+    else if (clipboard) { clipboard = null; paintClipboard(); }
+    else if (selection) clearSelection();
+    else hidePopover();
+    return;
+  }
+
+  // 文字入力中はアプリ側のショートカットを横取りしない
+  const tag = e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+  if (!isCmd(e)) return;
+
+  const key = e.key.toLowerCase();
+
+  if (key === 'z' && !e.shiftKey) {
+    if (!History.canUndo()) return;
+    e.preventDefault();
+    doUndo();
+    return;
+  }
+
+  if (key === 'c' || key === 'x') {
+    if (!selection) return;
+    const mode = key === 'c' ? 'copy' : 'cut';
+    if (selection.kind === 'task') {
+      const t = Store.task(selection.id);
+      if (t) { e.preventDefault(); putTaskOnClipboard(t, mode); }
+    } else if (selection.kind === 'subtask') {
+      const s = Store.subtask(selection.id);
+      if (s) { e.preventDefault(); putSubtaskOnClipboard(s, mode); }
+    }
+    return;
+  }
+
+  if (key === 'v') {
+    if (!clipboard || !selection) return;
+    if (clipboard.kind === 'task') {
+      // 貼り先はセルの選択が基本。中タスクを選んでいればその位置に重ねる
+      if (selection.kind === 'cell') {
+        e.preventDefault();
+        pasteTaskAt(selection.groupId, selection.monthIdx);
+      } else if (selection.kind === 'task') {
+        const t = Store.task(selection.id);
+        if (t) { e.preventDefault(); pasteTaskAt(t.groupId, t.startMonth); }
+      }
+    } else if (clipboard.kind === 'subtask' && selection.kind === 'subtask') {
+      const s = Store.subtask(selection.id);
+      if (s && s.startDate) { e.preventDefault(); pasteSubtaskAt(s.startDate); }
+    }
+  }
 });
 
 // ブラウザ標準の右クリックメニューは出さない
