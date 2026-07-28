@@ -21,12 +21,14 @@
 |---|---|
 | `index.html` | 画面の骨組み |
 | `styles.css` | 見た目 |
+| `config.js` | Supabase の接続情報（URL と publishable key） |
 | `holidays.js` | 日本の祝日をオフライン計算（春分秋分の近似式・ハッピーマンデー・振替休日・国民の休日） |
-| `store.js` | **データ層**。現在は localStorage 保存。ここだけ差し替えれば Supabase に移行できる |
+| `store.js` | **データ層**。Supabase に保存する。DBに触るのはこのファイルだけ |
 | `app.js` | 画面の描画と操作 |
 
 ES Modules は使わない（`file://` で開くと CORS で動かなくなるため）。
-すべてクラシックスクリプトで、読み込み順は holidays → store → app。
+すべてクラシックスクリプトで、読み込み順は
+**config → holidays → store → app**（後ろが前に依存しているので順番を変えないこと）。
 
 ## 開発環境の制約と回避策
 
@@ -86,13 +88,57 @@ v3まで実装済み。主な機能：
   今後もこの状態を崩さないこと（ローカルの `user.email` は
   `itoshoji@users.noreply.github.com` に設定済み）
 
+### Supabase（クラウド保存）
+
+移行済み。プロジェクト `gantt-app` / URL `https://gnokupdporpcvbivvibh.supabase.co`。
+接続情報は `store.js` の先頭に直書き（publishable key はフロントに置く前提のキー）。
+
+テーブルは `groups` / `tasks` / `subtasks` の3つ。`ON DELETE CASCADE` で親を消せば子も消える。
+
+**store.js の設計（ここを崩さないこと）**
+
+- 起動時に `Store.init()` で全件読み込み、メモリ上の `state` に載せる
+- 参照系は**同期**のまま。だから app.js は書き換え不要で、画面の反応も待ち時間ゼロ
+- 更新系は**楽観更新**。先にメモリを書き換えて即描画し、通信は裏で直列に流す。
+  失敗したら `Store.onError` → 画面上部に赤い帯を出す
+- DBはスネークケース、アプリはキャメルケース。変換は store.js の中だけで完結させる
+
+**⚠ 型の落とし穴**: `start_month` / `end_month` は **TEXT** カラムなので、DBからは
+`"3"` のような文字列で返ってくる。app.js は月を 0〜11 の**数値**として大小比較するため、
+読み込み時に `Number()` で戻すこと（`toTask()` で実施済み）。ここを外すと
+バーの位置がずれる。将来 SQL で INTEGER に変えるなら、この変換は残したままでよい。
+
+localStorage時代のデータは初回起動時に自動で引っ越す（`gantt-app:migrated-to-supabase`
+で二重実行を防止）。
+
+### ログインは「入れない」と決めた
+
+一度 Supabase Auth のログイン画面まで実装したが、**本人の判断で全面的に撤去した**
+（2026-07-27）。理由は「手帳に鍵をかけるほどのものではない、毎回の入力が煩わしい」。
+再度の提案は求められない限り不要。
+
+現状のリスクは共有済みで、本人が承知のうえ:
+
+- RLSは `allow all` のまま。**URLとキーを知った人は誰でも予定を読み書きできる**
+- リポジトリが Public なので、接続情報は `config.js` で公開されている
+
+気が変わったときの実装方針だけ残しておく:
+
+1. SQL Editor で `allow all` を
+   `FOR ALL TO authenticated USING (true) WITH CHECK (true)` に差し替え
+2. Authentication → Users で本人のユーザーを作る（Auto Confirm User をON）
+3. Authentication → Sign In / Providers → Email で
+   「Allow new users to sign up」をOFF
+4. `Auth` モジュール（`/auth/v1/token` を叩いてトークンを localStorage に保持し、
+   期限1分前に `grant_type=refresh_token` で更新）を作り、`store.js` の
+   `headers()` で anon key の代わりに本人のアクセストークンを送る
+
 ### 次にやること
 
 1. **Macからの push 認証がまだ未設定**。現状はGitHub→Macの取得（`git fetch` / `git pull`）
    のみ可能で、Mac→GitHubへは送れない。トークン入力はClaude側が代行できないので、
    本人操作かキーチェーン設定が必要
-2. Supabaseアカウント作成 → `store.js` を差し替えてクラウド保存に移行
-3. Vercel または Netlify でデプロイ
+2. Vercel または Netlify でデプロイ
 
 会社PCから vercel.app / supabase.co / github.com へのアクセスは確認済みで問題なし。
 GitHubアカウントとアクセストークンは発行済み。

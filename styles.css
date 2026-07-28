@@ -716,3 +716,16 @@ body {
 .cm-item.danger:hover { background: #fbeceb; }
 
 .cm-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+
+/* ---------- 保存エラーの帯 ---------- */
+.sync-error {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  padding: 9px 14px;
+  background: #fbeceb;
+  border-bottom: 1px solid #e6bcb7;
+  color: #9c3327;
+  font-size: 13px;
+  text-align: center;
+}

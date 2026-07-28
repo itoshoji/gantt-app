@@ -1381,4 +1381,27 @@ document.addEventListener('contextmenu', e => {
   e.preventDefault();
 });
 
-render();
+// ---------- 起動 ----------
+// 保存に失敗したら黙って消えるのが一番こわいので、画面上部に出しっぱなしにする
+function showSyncError(message) {
+  let bar = $('syncError');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'syncError';
+    bar.className = 'sync-error';
+    document.body.prepend(bar);
+  }
+  bar.textContent = message;
+  bar.hidden = false;
+}
+
+Store.onError = () => showSyncError(
+  '⚠ 保存できませんでした。通信状況を確認して、ページを再読み込みしてください。'
+);
+
+// Supabase から読み込み終わってから最初の描画をする
+Store.init().then(render).catch(err => {
+  console.error('Supabaseからの読み込みに失敗しました', err);
+  showSyncError('⚠ データを読み込めませんでした。通信状況を確認して再読み込みしてください。');
+  render();
+});
