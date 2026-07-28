@@ -100,20 +100,30 @@ body {
 }
 .icon-btn:hover { background: #eef1f5; }
 
-.add-btn {
-  border: none;
-  background: var(--accent);
-  color: #fff;
-  width: 32px; height: 32px;
+/* 項目一覧の一番下に置く「＋ 項目を追加」。一覧の続きに見えるよう幅を項目列に揃える */
+.add-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  box-sizing: border-box;
+  width: var(--head-w);
+  margin-top: 6px;
+  padding: 9px 12px;
+  border: 1px dashed var(--border);
   border-radius: 8px;
-  font-size: 18px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
   cursor: pointer;
-  display: grid;
-  place-items: center;
-  margin-left: auto;
 }
-.range-nav:not([hidden]) + .add-btn { margin-left: 0; }
-.add-btn:hover { filter: brightness(1.08); }
+.add-row:hover {
+  background: var(--panel);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.add-row-plus { font-size: 15px; line-height: 1; }
 
 /* ---------- ボード ---------- */
 .board { padding: 16px 20px 120px; }

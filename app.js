@@ -197,7 +197,7 @@ function renderGroups() {
   const groups = Store.groupsIn(scopeMode);
   $('emptyHint').hidden = groups.length > 0;
   $('emptyHint').textContent =
-    `右上の「＋」から${SCOPE_LABEL[scopeMode]}の項目を追加してください。`;
+    `下の「＋ 項目を追加」から${SCOPE_LABEL[scopeMode]}の項目を追加してください。`;
   groupListEl.innerHTML = '';
   const vis = visibleRange();
   const count = vis.to - vis.from + 1;

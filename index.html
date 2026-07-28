@@ -28,7 +28,6 @@
     <button id="nextRange" class="icon-btn" title="次へ">›</button>
   </div>
 
-  <button id="addGroup" class="add-btn" title="項目を追加">＋</button>
 </header>
 
 <!-- ガントビュー（年 / 四半期） -->
@@ -39,8 +38,11 @@
   </div>
   <div id="groupList"></div>
   <p class="empty-hint" id="emptyHint">
-    右上の「＋」から項目（定例業務・プロジェクト）を追加してください。
+    下の「＋ 項目を追加」から項目（定例業務・プロジェクト）を追加してください。
   </p>
+  <button id="addGroup" class="add-row" title="項目を追加">
+    <span class="add-row-plus">＋</span>項目を追加
+  </button>
 </main>
 
 <!-- 日ビュー（直近のToDo） -->
