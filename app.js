@@ -1915,13 +1915,76 @@ function showSyncError(message) {
   bar.hidden = false;
 }
 
-Store.onError = () => showSyncError(
-  '⚠ 保存できませんでした。通信状況を確認して、ページを再読み込みしてください。'
-);
+function hideSyncError() {
+  const bar = $('syncError');
+  if (bar) bar.hidden = true;
+}
 
-// Supabase から読み込み終わってから最初の描画をする
-Store.init().then(render).catch(err => {
-  console.error('Supabaseからの読み込みに失敗しました', err);
-  showSyncError('⚠ データを読み込めませんでした。通信状況を確認して再読み込みしてください。');
-  render();
+// ---------- ログイン ----------
+function showLogin(message) {
+  Store.reset();
+  clipboard = null;
+  clearSelection();
+  render();                        // 前に見えていた予定を残さない
+  $('logout').hidden = true;
+  $('loginOverlay').hidden = false;
+  const err = $('loginError');
+  err.textContent = message || '';
+  err.hidden = !message;
+  $('loginPassword').value = '';
+  $('loginPassword').focus();
+}
+
+$('loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('loginSubmit');
+  const err = $('loginError');
+  btn.disabled = true;
+  btn.textContent = 'ログイン中…';
+  err.hidden = true;
+  try {
+    await Auth.signIn($('loginPassword').value);
+    $('loginPassword').value = '';
+    $('loginOverlay').hidden = true;
+    await start();
+  } catch (e2) {
+    err.textContent = /invalid|credential/i.test(e2.message)
+      ? 'パスワードが違います。'
+      : `ログインできませんでした: ${e2.message}`;
+    err.hidden = false;
+    $('loginPassword').focus();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'ログイン';
+  }
 });
+
+$('logout').addEventListener('click', () => {
+  Auth.signOut();
+  hideSyncError();
+  showLogin();
+});
+
+Store.onError = err => {
+  if (err && err.isAuth) showLogin('ログインの期限が切れました。もう一度お願いします。');
+  else showSyncError('⚠ 保存できませんでした。通信状況を確認して、ページを再読み込みしてください。');
+};
+
+// ---------- 起動 ----------
+async function start() {
+  if (!Auth.isLoggedIn()) { showLogin(); return; }
+  $('loginOverlay').hidden = true;
+  $('logout').hidden = false;
+  try {
+    await Store.init();            // Supabase から読み終えてから最初の描画をする
+    hideSyncError();
+    render();
+  } catch (err) {
+    if (err && err.isAuth) { showLogin('ログインの期限が切れました。もう一度お願いします。'); return; }
+    console.error('Supabaseからの読み込みに失敗しました', err);
+    showSyncError('⚠ データを読み込めませんでした。通信状況を確認して再読み込みしてください。');
+    render();
+  }
+}
+
+start();

@@ -28,7 +28,24 @@
     <button id="nextRange" class="icon-btn" title="次へ">›</button>
   </div>
 
+  <button id="logout" class="logout-btn" title="この端末からログアウト" hidden>ログアウト</button>
 </header>
+
+<!-- ログイン画面（未ログインのあいだ、すべての上に被さる） -->
+<div class="overlay login-overlay" id="loginOverlay" hidden>
+  <form class="dialog login-dialog" id="loginForm">
+    <h2 class="dialog-title">スケジュール管理</h2>
+    <p class="login-lead">パスワードを入力してください。<br>この端末では次回から聞かれません。</p>
+    <label class="field">
+      <span class="field-label">パスワード</span>
+      <input type="password" id="loginPassword" autocomplete="current-password" required>
+    </label>
+    <p class="login-error" id="loginError" hidden></p>
+    <div class="dialog-actions">
+      <button type="submit" class="btn primary" id="loginSubmit">ログイン</button>
+    </div>
+  </form>
+</div>
 
 <!-- ガントビュー（年 / 四半期） -->
 <main class="board" id="boardView">
@@ -101,6 +118,7 @@
 
 <script src="config.js"></script>
 <script src="holidays.js"></script>
+<script src="auth.js"></script>
 <script src="store.js"></script>
 <script src="app.js"></script>
 </body>

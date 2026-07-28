@@ -25,10 +25,20 @@ const Store = (() => {
   const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
   // ---------- 通信 ----------
-  function headers(extra) {
+  // DB側(RLS)で「ログインした人だけ読み書き可」に絞っているので、
+  // 毎回ログイン中の本人のアクセストークンを添えて送る。
+  function authError(message) {
+    const e = new Error(message);
+    e.isAuth = true;
+    return e;
+  }
+
+  async function headers(extra) {
+    const token = await Auth.token();
+    if (!token) throw authError('ログインが必要です');
     return Object.assign({
       apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     }, extra);
   }
@@ -36,9 +46,12 @@ const Store = (() => {
   async function req(method, path, body, extra) {
     const res = await fetch(REST + path, {
       method,
-      headers: headers(extra),
+      headers: await headers(extra),
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    if (res.status === 401 || res.status === 403) {
+      throw authError('ログインの期限が切れました');
+    }
     if (!res.ok) {
       throw new Error(`${method} ${path} → ${res.status} ${await res.text()}`);
     }
@@ -221,6 +234,9 @@ const Store = (() => {
     init,
     set onError(fn) { onError = fn; },
     get onError() { return onError; },
+
+    // ログアウト時に手元のデータを消す（次に開いた人に前の中身を見せないため）
+    reset() { state = { groups: [], tasks: [], subtasks: [] }; },
 
     // --- 元に戻す用 ---
     snapshot: () => clone(state),
