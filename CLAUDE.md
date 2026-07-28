@@ -140,12 +140,9 @@ DB側の RLS（`FOR ALL TO authenticated`）。**ここを `allow all` に戻す
 その後 2026-07-28 に再検討して導入した。**決め手は「毎回ではなく端末ごとに一度だけ」**
 という点が誤解されていたこと。撤去を再提案する必要はない。
 
-### 未対応（デプロイ前にやること）
-
-- Authentication → Sign In / Providers → Email の
-  **「Allow new users to sign up」を OFF にする**。
-  今は誰でも自分のアカウントを作れてしまい、作れば `authenticated` として
-  データを読み書きできる。**公開する前に必ず塞ぐこと。**
+新規サインアップは**停止済み**（`/auth/v1/settings` の `disable_signup: true` で確認）。
+勝手にアカウントを作られて `authenticated` になられる経路は塞がっている。
+**再び有効にしないこと。**
 
 ### 実装のポイント（2026-07-28 の追加分）
 
