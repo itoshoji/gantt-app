@@ -31,12 +31,19 @@ import build_standalone
 HERE = Path(__file__).parent
 
 # Googleドライブの同期フォルダ。ここに置くと自動でクラウドへ上がる。
-# テストしたいときは GANTT_DRIVE_DIR で差し替えられる。
-DRIVE = (
-    Path.home()
-    / "Library/CloudStorage/GoogleDrive-dear.crown@gmail.com"
-    / "マイドライブ/スケジュール管理アプリ"
-)
+# フォルダ名にGoogleアカウントのメールアドレスが入るが、このリポジトリはPublicなので
+# 直書きせずに探す。動作確認したいときは --drive で差し替えられる。
+DRIVE_SUBPATH = "マイドライブ/スケジュール管理アプリ"
+
+
+def find_drive() -> "Path | None":
+    """Googleドライブの同期フォルダを探す。見つからなければ None。"""
+    base = Path.home() / "Library/CloudStorage"
+    for account in sorted(base.glob("GoogleDrive-*")):
+        d = account / DRIVE_SUBPATH
+        if d.is_dir():
+            return d
+    return None
 
 def git(*args: str, capture: bool = False) -> str:
     """gitを呼ぶ。失敗したらそこで止める。"""
@@ -69,9 +76,14 @@ def main() -> None:
     ap.add_argument("--drive", type=Path, default=None, help="出力先の親フォルダ（動作確認用）")
     args = ap.parse_args()
 
-    drive = args.drive or DRIVE
+    drive = args.drive or find_drive()
+    if drive is None:
+        sys.exit(
+            "Googleドライブの同期フォルダが見つかりません。\n"
+            f"~/Library/CloudStorage/GoogleDrive-<アカウント>/{DRIVE_SUBPATH} を確認してください。"
+        )
     if not drive.is_dir():
-        sys.exit(f"ドライブの同期フォルダが見つかりません: {drive}")
+        sys.exit(f"フォルダがありません: {drive}")
 
     n = args.version or next_version(drive)
     html_path = drive / NAME.format(n=n)

@@ -210,8 +210,12 @@ gantt-pick   # 過去のセッション一覧から選ぶ
 ダウンロードしてダブルクリックで使う。
 
 ```
-~/Library/CloudStorage/GoogleDrive-dear.crown@gmail.com/マイドライブ/スケジュール管理アプリ/
+~/Library/CloudStorage/GoogleDrive-<アカウント>/マイドライブ/スケジュール管理アプリ/
 ```
+
+**フォルダ名にGoogleアカウントのメールアドレスが入るが、このリポジトリはPublicなので
+ドキュメントにもコードにも直書きしない。** `release.py` の `find_drive()` が
+`GoogleDrive-*` を探して見つける。
 
 **この同期フォルダの直下に、HTMLをそのまま置く。** `cp` するだけで自動同期される。
 版はファイル名の番号（`スケジュール管理_v7.html`）で見分け、同じ版を上書きせず番号を増やす。

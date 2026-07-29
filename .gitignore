@@ -4,3 +4,6 @@
 # macOS
 .DS_Store
 standalone.html
+
+# セッション再開用。マシン固有の絶対パスが入るので共有しない
+セッション再開.command
