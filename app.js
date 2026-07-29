@@ -5,10 +5,10 @@ const MONTH_LABELS = ['4月','5月','6月','7月','8月','9月','10月','11月',
 const DOW = ['日','月','火','水','木','金','土'];
 const LANE_H = 34;      // ガントバーの高さ（styles.css の --lane-h と合わせる）
 const LANE_GAP = 6;     // 同上 --lane-gap
-// カレンダーの予定バーは1行（小タスク名だけ）。
+// カレンダーの予定バーは「項目 / 中タスク」と小タスク名の2段組み。
 // （styles.css の --cal-bar-h / --cal-bar-gap と合わせること）
-const CAL_BAR_H = 26;
-const CAL_BAR_GAP = 3;
+const CAL_BAR_H = 44;
+const CAL_BAR_GAP = 4;
 const VIEW_KEY = 'gantt-app:view';
 const SCOPE_KEY = 'gantt-app:scope';
 
@@ -139,15 +139,17 @@ function calBarStyle(baseHex) {
   };
 }
 
-// 小タスクが多いほど濃くなる（0個=淡い / 5個以上=項目の色そのもの）
+// ガントのバーもカレンダーと同じ組み立てにする（淡い下地＋左端の色帯＋濃い文字）。
+// 以前は小タスクが多いほど色そのものまで濃くしていたが、行が増えると
+// カレンダーと同じ理由で画面が重くなる。濃さの差は「気持ち変わる」程度に留め、
+// 何個あるかはバー右端の数字で読ませる。
 function barStyle(baseHex, subCount) {
-  const { h, s, l } = hexToHsl(baseHex);
+  const { h, s } = hexToHsl(baseHex);
   const t = Math.min(subCount, 5) / 5;
-  const light = 84 - (84 - l) * (0.22 + 0.78 * t);
-  const sat = s * (0.5 + 0.5 * t);
   return {
-    bg: `hsl(${h.toFixed(0)} ${sat.toFixed(0)}% ${light.toFixed(0)}%)`,
-    fg: light > 62 ? '#2a2f36' : '#ffffff',
+    bg: `hsl(${h.toFixed(0)} ${Math.min(s, 68).toFixed(0)}% ${(95 - 7 * t).toFixed(0)}%)`,
+    fg: `hsl(${h.toFixed(0)} ${Math.min(s, 52).toFixed(0)}% 27%)`,
+    accent: baseHex,
   };
 }
 
@@ -586,13 +588,14 @@ function applyBarGeometry(bar, startMonth, endMonth, vis) {
 
 function createBar(t, g, lane, vis) {
   const subCount = Store.subtasksOf(t.id).length;
-  const { bg, fg } = barStyle(taskColor(t, g), subCount);
+  const { bg, fg, accent } = barStyle(taskColor(t, g), subCount);
 
   const bar = document.createElement('div');
   bar.className = 'bar';
   bar.dataset.taskId = t.id;
   bar.style.background = bg;
   bar.style.color = fg;
+  bar.style.setProperty('--accent-color', accent);
   bar.style.top = lane * (LANE_H + LANE_GAP) + 'px';
   applyBarGeometry(bar, t.startMonth, t.endMonth, vis);
 
@@ -1562,9 +1565,13 @@ function createCalBar(seg, weekStart) {
   bar.style.width = `calc(${(span / 7) * 100}% - ${insL + insR}px)`;
   bar.style.top = lane * (CAL_BAR_H + CAL_BAR_GAP) + 'px';
 
-  // かつては小タスク名の上に「項目 / 中タスク」を添えていたが、予定が並ぶと
-  // 文字が多すぎて逆に読めなくなったのでやめた（2026-07-29 本人の指摘）。
-  // 何の仕事かは左端の色帯で見分け、正確な所属はマウスを乗せれば出る。
+  // 小タスク名だけでは「何の予定か」が分からないので、上に「項目 / 中タスク」を
+  // 添える（2026-07-29 本人の指摘で1行から戻した）。色帯だけでは足りない。
+  const path = document.createElement('span');
+  path.className = 'cal-bar-path';
+  path.textContent = `${it.g ? it.g.name : ''} / ${it.t ? (it.t.name || '（無題）') : ''}`;
+  bar.appendChild(path);
+
   const label = document.createElement('span');
   label.className = 'cal-bar-label';
   label.textContent = it.s.name || '（無題）';

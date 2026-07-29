@@ -3,9 +3,9 @@
   --lane-h: 34px;
   --lane-gap: 6px;
   /* カレンダーの寸法。app.js の CAL_BAR_H / CAL_BAR_GAP と合わせること */
-  --cal-bar-h: 26px;
-  --cal-bar-gap: 3px;
-  --cal-date-h: 28px;   /* 日付の数字が占める高さ。バーはこの下から始まる */
+  --cal-bar-h: 44px;
+  --cal-bar-gap: 4px;
+  --cal-date-h: 30px;   /* 日付の数字が占める高さ。バーはこの下から始まる */
   --border: #e2e6ec;
   --text: #1f2937;
   --muted: #8a93a0;
@@ -148,7 +148,7 @@ body {
 
 .head-cell {
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   border-bottom: 1px solid var(--border);
 }
@@ -161,7 +161,7 @@ body {
 .month-head {
   padding: 8px 0;
   text-align: center;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   cursor: pointer;
   border-left: 1px solid var(--border);
@@ -213,7 +213,7 @@ body {
 
 .group-tag {
   display: inline-block;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin-left: 6px;
 }
@@ -252,43 +252,52 @@ body {
 /* バーの層は行全体を覆うので、バー本体以外はクリックを下のセルに通す */
 .bars { position: relative; pointer-events: none; }
 
+/* カレンダーの .cal-bar と同じ作り。淡い下地＋左端に項目の色の帯＋濃い文字 */
 .bar {
   position: absolute;
   pointer-events: auto;
   height: var(--lane-h);
   border-radius: 7px;
+  border-left: 3px solid var(--accent-color, transparent);
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
-  font-size: 12.5px;
+  padding: 0 10px 0 12px;
+  font-size: 14px;
   cursor: grab;
   user-select: none;
   overflow: hidden;
   white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, .12);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .08);
   touch-action: none;
 }
 .bar:active { cursor: grabbing; }
 .bar.is-dragging { opacity: .85; box-shadow: 0 4px 12px rgba(15, 23, 42, .22); z-index: 5; }
-/* 表示範囲からはみ出している側は角を落として「続いている」ことを示す */
-.bar.clip-left { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+/* 表示範囲からはみ出している側は角を落として「続いている」ことを示す。
+   左に続いているときは、そこが始まりではないので色帯も出さない */
+.bar.clip-left {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left-width: 0;
+  padding-left: 10px;
+}
 .bar.clip-right { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 
 .bar .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; flex: 1; min-width: 0; }
 
 .bar .count {
-  font-size: 11px;
-  opacity: .75;
+  font-size: 12px;
+  opacity: .7;
   pointer-events: none;
   flex: none;
 }
 
+/* 下地が淡くなったので、白い下敷きでは見えない。暗い側で薄く敷く */
 .bar .edge {
-  font-size: 10.5px;
-  background: rgba(255, 255, 255, .35);
+  font-size: 11.5px;
+  background: rgba(15, 23, 42, .07);
   border-radius: 3px;
-  padding: 1px 4px;
+  padding: 1px 5px;
   pointer-events: none;
   flex: none;
 }
@@ -542,12 +551,13 @@ body {
 .cal-day.is-sun { background: var(--sun-bg); }
 .cal-day.in-range { background: #dbe9f5; }
 
+/* 日付はカレンダーの基準点。予定名（15px）より一段強くして主役にする */
 .cal-date {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   color: var(--text);
   display: inline-block;
-  min-width: 24px;
+  min-width: 26px;
   text-align: center;
   padding: 2px 0;
 }
@@ -562,19 +572,22 @@ body {
   pointer-events: none;
 }
 
-/* 1行だけ。塗りは淡くして、色は左端の帯に寄せる（面積を減らすと騒がしくなくなる）。
-   文字の大きさ・角丸はガントの .bar と揃えてある */
+/* 上段に「項目 / 中タスク」、下段に予定名の2行。
+   塗りは淡くして、色は左端の帯に寄せる（面積を減らすと騒がしくなくなる）。
+   角丸・影・色の作り方はガントの .bar と揃えてある */
 .cal-bar {
   position: absolute;
   height: var(--cal-bar-h);
   pointer-events: auto;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
   padding: 0 8px 0 10px;
-  font-size: 12.5px;
-  line-height: 1.2;
+  line-height: 1.25;
   border-radius: 7px;
   border-left: 3px solid var(--accent-color, transparent);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .08);
   white-space: nowrap;
   overflow: hidden;
   cursor: grab;
@@ -592,8 +605,17 @@ body {
 }
 .cal-bar.cont-right { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 
+/* 上段は所属の手がかり。主役は下段の予定名なので、一段小さく薄くする */
+.cal-bar .cal-bar-path {
+  font-size: 12px;
+  opacity: .72;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
 .cal-bar .cal-bar-label {
-  font-weight: 500;
+  font-size: 15px;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
