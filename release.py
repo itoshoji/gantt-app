@@ -33,7 +33,7 @@ HERE = Path(__file__).parent
 # Googleドライブの同期フォルダ。ここに置くと自動でクラウドへ上がる。
 # フォルダ名にGoogleアカウントのメールアドレスが入るが、このリポジトリはPublicなので
 # 直書きせずに探す。動作確認したいときは --drive で差し替えられる。
-DRIVE_SUBPATH = "マイドライブ/スケジュール管理アプリ"
+DRIVE_SUBPATH = "マイドライブ/claude開発アプリ/スケジュール管理"
 
 
 def find_drive() -> "Path | None":
