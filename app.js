@@ -1565,11 +1565,12 @@ function createCalBar(seg, weekStart) {
   bar.style.width = `calc(${(span / 7) * 100}% - ${insL + insR}px)`;
   bar.style.top = lane * (CAL_BAR_H + CAL_BAR_GAP) + 'px';
 
-  // 小タスク名だけでは「何の予定か」が分からないので、上に「項目 / 中タスク」を
-  // 添える（2026-07-29 本人の指摘で1行から戻した）。色帯だけでは足りない。
+  // 小タスク名だけでは「何の予定か」が分からないので、上に項目名を添える。
+  // 中タスク名まで出すと文字が多くて読みにくかったので出さない
+  // （2026-07-29 本人の指摘。中タスクまで含めた所属はマウスを乗せれば出る）。
   const path = document.createElement('span');
   path.className = 'cal-bar-path';
-  path.textContent = `${it.g ? it.g.name : ''} / ${it.t ? (it.t.name || '（無題）') : ''}`;
+  path.textContent = it.g ? (it.g.name || '（無題）') : '';
   bar.appendChild(path);
 
   const label = document.createElement('span');
