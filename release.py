@@ -12,8 +12,9 @@
     1. 未コミットの変更があればコミットする（＝PCに保存）
     2. 1ファイル版をビルドして、Googleドライブの同期フォルダ vN/ に置く
 
-置くのはHTML1つだけ。以前は つかいかた.txt も一緒に置いていたが、
-本人には不要なのでやめた（2026-07-29）。
+置くのは **同期フォルダの直下にHTML 1つだけ**。以前は vN フォルダを作り
+つかいかた.txt も添えていたが、どちらも不要なのでやめた（2026-07-29）。
+版はファイル名の番号で見分ける。
 
 **GitHubへのpushはしない。** 本人が実際に触って感触を確かめてから、
 `--push` を付けて走らせるか `git push` する（2026-07-29 本人の指示）。
@@ -46,12 +47,15 @@ def git(*args: str, capture: bool = False) -> str:
     return (r.stdout or "").strip() if capture else ""
 
 
+NAME = "スケジュール管理_v{n}.html"
+
+
 def next_version(drive: Path) -> int:
-    """ドライブにある vN のうち一番大きい番号の次を返す。"""
+    """ドライブにあるHTMLのうち一番大きい版番号の次を返す。"""
     used = [
         int(m.group(1))
-        for p in drive.glob("v*")
-        if p.is_dir() and (m := re.fullmatch(r"v(\d+)", p.name))
+        for p in drive.glob("スケジュール管理_v*.html")
+        if (m := re.fullmatch(r"スケジュール管理_v(\d+)\.html", p.name))
     ]
     return max(used, default=0) + 1
 
@@ -70,9 +74,9 @@ def main() -> None:
         sys.exit(f"ドライブの同期フォルダが見つかりません: {drive}")
 
     n = args.version or next_version(drive)
-    out_dir = drive / f"v{n}"
-    if out_dir.exists():
-        sys.exit(f"v{n} はもうあります。同じ版を上書きしない方針なので、番号を変えてください。")
+    html_path = drive / NAME.format(n=n)
+    if html_path.exists():
+        sys.exit(f"{html_path.name} はもうあります。同じ版を上書きしない方針なので、番号を変えてください。")
 
     # 1. 先にコミットする。こうすると、置いたHTMLと GitHub の中身が必ず一致する。
     if not args.no_git:
@@ -85,10 +89,8 @@ def main() -> None:
         else:
             print("未コミットの変更はありません")
 
-    # 2. 1ファイル版を作って置く
+    # 2. 1ファイル版を作って置く（フォルダは作らず、同期フォルダに直接置く）
     html = build_standalone.build()
-    out_dir.mkdir()
-    html_path = out_dir / f"スケジュール管理_v{n}.html"
     html_path.write_text(html, encoding="utf-8")
     print(f"{html_path} を作成しました（{len(html.encode('utf-8')):,} バイト）")
 
@@ -97,7 +99,7 @@ def main() -> None:
         git("push")
         print("GitHubへpushしました")
 
-    print(f"\n完了。ドライブの v{n} フォルダから開いてください。")
+    print(f"\n完了。ドライブの {html_path.name} を開いてください。")
     print("（同期に少し時間がかかることがあります）")
     if not args.push and not args.no_git:
         print("GitHubへのバックアップはまだです。良さそうなら git push してください。")
