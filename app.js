@@ -5,10 +5,10 @@ const MONTH_LABELS = ['4月','5月','6月','7月','8月','9月','10月','11月',
 const DOW = ['日','月','火','水','木','金','土'];
 const LANE_H = 34;      // ガントバーの高さ（styles.css の --lane-h と合わせる）
 const LANE_GAP = 6;     // 同上 --lane-gap
-// カレンダーの予定バーは「項目 / 中タスク」と小タスク名の2段組みなので背が高い
+// カレンダーの予定バーは1行（小タスク名だけ）。
 // （styles.css の --cal-bar-h / --cal-bar-gap と合わせること）
-const CAL_BAR_H = 38;
-const CAL_BAR_GAP = 4;
+const CAL_BAR_H = 26;
+const CAL_BAR_GAP = 3;
 const VIEW_KEY = 'gantt-app:view';
 const SCOPE_KEY = 'gantt-app:scope';
 
@@ -124,6 +124,19 @@ function hexToHsl(hex) {
 // 中タスクに個別の色が付いていればそれを、無ければ親の項目の色を使う
 function taskColor(t, g) {
   return (t && t.color) || (g && g.color) || GROUP_COLORS[0];
+}
+
+// カレンダーの予定バー。ガントは1行に1〜数本だが、カレンダーは1マスに何本も
+// 積み上がるので、同じ濃さで塗ると画面が真っ黒に近くなって読めなくなる。
+// 「下地は淡く、色は左端の帯だけ」にして、色の面積を減らす。
+// 文字色も同じ色相から作るので、淡くしても何の予定かは分かる。
+function calBarStyle(baseHex) {
+  const { h, s } = hexToHsl(baseHex);
+  return {
+    bg: `hsl(${h.toFixed(0)} ${Math.min(s, 68).toFixed(0)}% 94%)`,
+    fg: `hsl(${h.toFixed(0)} ${Math.min(s, 52).toFixed(0)}% 27%)`,
+    accent: baseHex,
+  };
 }
 
 // 小タスクが多いほど濃くなる（0個=淡い / 5個以上=項目の色そのもの）
@@ -1541,20 +1554,17 @@ function createCalBar(seg, weekStart) {
     + (calPreview && calPreview.id === it.s.id ? ' is-ghost' : '');
   bar.dataset.subId = it.s.id;
   if (!it.focused) bar.classList.add('is-unfocused');
-  const st = barStyle(taskColor(it.t, it.g), 5);
+  const st = calBarStyle(taskColor(it.t, it.g));
   bar.style.background = st.bg;
   bar.style.color = st.fg;
+  bar.style.setProperty('--accent-color', st.accent);
   bar.style.left = `calc(${(startCol / 7) * 100}% + ${insL}px)`;
   bar.style.width = `calc(${(span / 7) * 100}% - ${insL + insR}px)`;
   bar.style.top = lane * (CAL_BAR_H + CAL_BAR_GAP) + 'px';
 
-  // 予定が増えると「これ何の仕事だっけ」となるので、
-  // 小タスク名の上に「項目 / 中タスク」を薄く添える
-  const path = document.createElement('span');
-  path.className = 'cal-bar-path';
-  path.textContent = `${it.g ? it.g.name : ''} / ${it.t ? (it.t.name || '（無題）') : ''}`;
-  bar.appendChild(path);
-
+  // かつては小タスク名の上に「項目 / 中タスク」を添えていたが、予定が並ぶと
+  // 文字が多すぎて逆に読めなくなったのでやめた（2026-07-29 本人の指摘）。
+  // 何の仕事かは左端の色帯で見分け、正確な所属はマウスを乗せれば出る。
   const label = document.createElement('span');
   label.className = 'cal-bar-label';
   label.textContent = it.s.name || '（無題）';
