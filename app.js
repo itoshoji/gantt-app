@@ -1057,7 +1057,8 @@ function createTodoItem(x) {
 
   const bar = document.createElement('span');
   bar.className = 'todo-bar';
-  bar.style.background = g.color;
+  // 中タスクに個別の色が付いていればそれを使う（ガント・カレンダーと合わせる）
+  bar.style.background = taskColor(t, g);
   el.appendChild(bar);
 
   const body = document.createElement('div');
@@ -1070,6 +1071,11 @@ function createTodoItem(x) {
   path.textContent = `${g.name} › ${t.name || '（無題）'}`;
   body.append(name, path);
   el.appendChild(body);
+
+  // 名前も所属も横幅で切れるので、全文は小窓で見せる（showTip が読む）
+  el.dataset.tipPath = `${g.name} › ${t.name || '（無題）'}`;
+  el.dataset.tipName = s.name || '（無題）';
+  el.style.setProperty('--accent-color', taskColor(t, g));
 
   const span = document.createElement('span');
   span.className = 'todo-span';
@@ -1339,6 +1345,8 @@ window.addEventListener('resize', closeContextMenu);
 // バーの幅は期間で決まるので、短い予定は名前が「…」で切れて読めない。
 // マウスを乗せて少し待つと全文を出す。すぐ出すと、通り過ぎるだけでも
 // ちらついてうるさいので間を置く。
+// 対象は3か所 — ガントのバー / カレンダーの予定 / 「日」表示の一覧。
+// 名前が切れうる場所はこの3つなので、同じ小窓で揃えている。
 const tipEl = $('tip');
 const TIP_DELAY = 220;
 let tipTimer = null;
@@ -1386,7 +1394,7 @@ function showTip(bar, x, y) {
 
 document.addEventListener('pointerover', e => {
   if (e.pointerType && e.pointerType !== 'mouse') return;   // 指では出さない
-  const bar = e.target.closest && e.target.closest('.bar, .cal-bar');
+  const bar = e.target.closest && e.target.closest('.bar, .cal-bar, .todo-item');
   if (!bar) { hideTip(); return; }
   if (pointerHeld) return;
   if (!menuEl.hidden) return;              // 右クリックメニューが開いている間は邪魔しない
@@ -1398,7 +1406,7 @@ document.addEventListener('pointerover', e => {
 
 document.addEventListener('pointermove', e => {
   if (tipEl.hidden) return;
-  if (!(e.target.closest && e.target.closest('.bar, .cal-bar'))) { hideTip(); return; }
+  if (!(e.target.closest && e.target.closest('.bar, .cal-bar, .todo-item'))) { hideTip(); return; }
   placeTip(e.clientX, e.clientY);
 });
 
