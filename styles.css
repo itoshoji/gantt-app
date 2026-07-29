@@ -647,6 +647,31 @@ body {
 .cal-bar .cal-handle.left::after { left: 2px; }
 .cal-bar .cal-handle.right::after { right: 2px; }
 
+/* ---------- 名前の全文を出す小窓 ---------- */
+/* バーが短いと名前が「…」で切れる。マウスを乗せている間だけ全文を出す。
+   バー本体と同じ「左端に色の帯」にして、どの予定のものか分かるようにする。
+   pointer-events:none にしないと、この窓自体がマウスを奪ってちらつく。 */
+.tip {
+  position: fixed;
+  z-index: 200;
+  max-width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-color, var(--accent));
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, .18);
+  padding: 8px 11px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text);
+  pointer-events: none;
+  white-space: normal;
+  word-break: break-word;
+}
+.tip[hidden] { display: none; }
+.tip-path { font-size: 11.5px; color: var(--muted); margin-bottom: 1px; }
+.tip-name { font-weight: 600; }
+
 /* ---------- 吹き出し ---------- */
 .popover {
   position: absolute;

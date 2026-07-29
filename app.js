@@ -612,6 +612,10 @@ function createBar(t, g, lane, vis) {
   label.textContent = t.name || '（無題）';
   bar.appendChild(label);
 
+  // バーが短いと名前が「…」で切れるので、全文を持たせておく（showTip が読む）
+  bar.dataset.tipPath = g ? (g.name || '（無題）') : '';
+  bar.dataset.tipName = t.name || '（無題）';
+
   if (subCount > 0) {
     const count = document.createElement('span');
     count.className = 'count';
@@ -1331,6 +1335,79 @@ document.addEventListener('pointerdown', e => {
 window.addEventListener('scroll', closeContextMenu, true);
 window.addEventListener('resize', closeContextMenu);
 
+// ---------- 名前の全文を出す小窓 ----------
+// バーの幅は期間で決まるので、短い予定は名前が「…」で切れて読めない。
+// マウスを乗せて少し待つと全文を出す。すぐ出すと、通り過ぎるだけでも
+// ちらついてうるさいので間を置く。
+const tipEl = $('tip');
+const TIP_DELAY = 220;
+let tipTimer = null;
+let pointerHeld = false;   // ドラッグ中は出さない
+
+function hideTip() {
+  clearTimeout(tipTimer);
+  tipTimer = null;
+  tipEl.hidden = true;
+}
+
+function placeTip(x, y) {
+  const r = tipEl.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth;
+  const vh = document.documentElement.clientHeight;
+  // 既定はカーソルの右下。画面からはみ出す側は反対に返す
+  let left = x + 14;
+  let top = y + 18;
+  if (left + r.width > vw - 8) left = Math.max(8, x - 14 - r.width);
+  if (top + r.height > vh - 8) top = Math.max(8, y - 12 - r.height);
+  tipEl.style.left = left + 'px';
+  tipEl.style.top = top + 'px';
+}
+
+function showTip(bar, x, y) {
+  const path = bar.dataset.tipPath || '';
+  const name = bar.dataset.tipName || '';
+  if (!name) return;
+  tipEl.innerHTML = '';
+  if (path) {
+    const p = document.createElement('div');
+    p.className = 'tip-path';
+    p.textContent = path;
+    tipEl.appendChild(p);
+  }
+  const n = document.createElement('div');
+  n.className = 'tip-name';
+  n.textContent = name;
+  tipEl.appendChild(n);
+  // バーと同じ色の帯を左に付けて、どの予定のものか分かるようにする
+  tipEl.style.setProperty('--accent-color', bar.style.getPropertyValue('--accent-color') || '');
+  tipEl.hidden = false;
+  placeTip(x, y);
+}
+
+document.addEventListener('pointerover', e => {
+  if (e.pointerType && e.pointerType !== 'mouse') return;   // 指では出さない
+  const bar = e.target.closest && e.target.closest('.bar, .cal-bar');
+  if (!bar) { hideTip(); return; }
+  if (pointerHeld) return;
+  if (!menuEl.hidden) return;              // 右クリックメニューが開いている間は邪魔しない
+  if (bar.querySelector('input')) return;  // 名前を書き換えている最中も出さない
+  clearTimeout(tipTimer);
+  const { clientX, clientY } = e;
+  tipTimer = setTimeout(() => showTip(bar, clientX, clientY), TIP_DELAY);
+});
+
+document.addEventListener('pointermove', e => {
+  if (tipEl.hidden) return;
+  if (!(e.target.closest && e.target.closest('.bar, .cal-bar'))) { hideTip(); return; }
+  placeTip(e.clientX, e.clientY);
+});
+
+document.addEventListener('pointerdown', () => { pointerHeld = true; hideTip(); }, true);
+document.addEventListener('pointerup', () => { pointerHeld = false; }, true);
+document.addEventListener('pointercancel', () => { pointerHeld = false; }, true);
+window.addEventListener('scroll', hideTip, true);
+window.addEventListener('resize', hideTip);
+
 // ==========================================================
 // 月間カレンダー
 // ==========================================================
@@ -1577,7 +1654,11 @@ function createCalBar(seg, weekStart) {
   label.className = 'cal-bar-label';
   label.textContent = it.s.name || '（無題）';
   bar.appendChild(label);
-  bar.title = `${it.g ? it.g.name : ''} / ${it.t ? (it.t.name || '（無題）') : ''}\n${it.s.name || '（無題）'}`;
+
+  // 全文と、画面には出していない中タスク名は小窓で見せる（showTip が読む）。
+  // title属性は出るまで遅く見た目も揃わないので使わない
+  bar.dataset.tipPath = `${it.g ? (it.g.name || '（無題）') : ''} / ${it.t ? (it.t.name || '（無題）') : ''}`;
+  bar.dataset.tipName = it.s.name || '（無題）';
 
   // 実際の開始日・終了日がこの区間にあるときだけ、伸縮用の持ち手を出す
   if (!contLeft) bar.appendChild(calHandle('left'));
