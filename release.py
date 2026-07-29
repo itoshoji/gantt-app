@@ -4,17 +4,18 @@
     python3 release.py                  # 版番号は自動（今ある最大 + 1）
     python3 release.py 3                # 版番号を指定する
     python3 release.py -m "色を直した"   # コミットメッセージを付ける
+    python3 release.py --push           # GitHubへのバックアップまでやる
     python3 release.py --no-git         # gitは触らず、ファイルだけ作る
 
 やること:
 
-    1. 未コミットの変更があればコミットする
+    1. 未コミットの変更があればコミットする（＝PCに保存）
     2. 1ファイル版をビルドして、Googleドライブの同期フォルダ vN/ に置く
     3. つかいかた.txt を版番号を書き換えて一緒に置く
-    4. GitHub へ push する（Vercelはこれで自動反映される）
 
-日常の細かい直しはここまでやらず、git push だけで止めてよい。
-このスクリプトは「会社PCで使う版を新しくする」ときに走らせるもの。
+**GitHubへのpushはしない。** 本人が実際に触って感触を確かめてから、
+`--push` を付けて走らせるか `git push` する（2026-07-29 本人の指示）。
+本人は起動を全部Googleドライブから行うので、ここまでが「改良1回分」の1セット。
 """
 import argparse
 import datetime
@@ -79,6 +80,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="1ファイル版をドライブに出して、GitHubへpushする")
     ap.add_argument("version", nargs="?", type=int, help="版番号（省略すると自動）")
     ap.add_argument("-m", "--message", default="", help="コミットメッセージ")
+    ap.add_argument("--push", action="store_true", help="GitHubへpushもする（感触を確かめてから）")
     ap.add_argument("--no-git", action="store_true", help="gitを触らない")
     ap.add_argument("--drive", type=Path, default=None, help="出力先の親フォルダ（動作確認用）")
     args = ap.parse_args()
@@ -120,13 +122,15 @@ def main() -> None:
     )
     print(f"{out_dir / 'つかいかた.txt'} を作成しました")
 
-    # 4. GitHubへ
-    if not args.no_git:
+    # 4. GitHubへ。既定ではやらない（本人が触って良ければ、が手順）
+    if args.push and not args.no_git:
         git("push")
         print("GitHubへpushしました")
 
-    print(f"\n完了。ドライブの v{n} フォルダから落としてください。")
+    print(f"\n完了。ドライブの v{n} フォルダから開いてください。")
     print("（同期に少し時間がかかることがあります）")
+    if not args.push and not args.no_git:
+        print("GitHubへのバックアップはまだです。良さそうなら git push してください。")
 
 
 if __name__ == "__main__":

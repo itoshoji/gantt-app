@@ -2,6 +2,10 @@
   --head-w: 250px;
   --lane-h: 34px;
   --lane-gap: 6px;
+  /* カレンダーの寸法。app.js の CAL_BAR_H / CAL_BAR_GAP と合わせること */
+  --cal-bar-h: 38px;
+  --cal-bar-gap: 4px;
+  --cal-date-h: 30px;   /* 日付の数字が占める高さ。バーはこの下から始まる */
   --border: #e2e6ec;
   --text: #1f2937;
   --muted: #8a93a0;
@@ -489,7 +493,7 @@ body {
   white-space: nowrap;
 }
 .calendar-scope:empty { display: none; }
-.calendar-hint { margin: 0 0 12px; font-size: 12px; color: var(--muted); flex: none; }
+.calendar-hint { margin: 0 0 10px; font-size: 13px; color: var(--muted); flex: none; }
 
 .calendar {
   border: 1px solid var(--border);
@@ -511,9 +515,10 @@ body {
 }
 .cal-dow {
   text-align: center;
-  font-size: 11px;
-  padding: 6px 0;
-  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 0;
+  color: var(--text);
   border-right: 1px solid var(--border);
 }
 .cal-dow:last-child { border-right: none; }
@@ -527,7 +532,7 @@ body {
 .cal-day {
   border-right: 1px solid var(--border);
   padding: 3px 4px;
-  min-height: calc(26px + var(--rows, 1) * 33px);
+  min-height: calc(var(--cal-date-h) + var(--rows, 1) * (var(--cal-bar-h) + var(--cal-bar-gap)));
   user-select: none;
 }
 .cal-day:last-child { border-right: none; }
@@ -537,12 +542,13 @@ body {
 .cal-day.in-range { background: #dbe9f5; }
 
 .cal-date {
-  font-size: 11px;
-  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
   display: inline-block;
-  min-width: 18px;
+  min-width: 24px;
   text-align: center;
-  padding: 1px 0;
+  padding: 2px 0;
 }
 .cal-day.is-sat .cal-date { color: var(--sat); }
 .cal-day.is-sun .cal-date { color: var(--sun); }
@@ -551,21 +557,21 @@ body {
 .cal-bars {
   position: absolute;
   left: 0; right: 0;
-  top: 24px;
+  top: var(--cal-date-h);
   pointer-events: none;
 }
 
 .cal-bar {
   position: absolute;
-  height: 30px;
+  height: var(--cal-bar-h);
   pointer-events: auto;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 1px;
-  padding: 0 6px;
-  font-size: 11px;
-  line-height: 1.15;
+  padding: 0 7px;
+  font-size: 13px;
+  line-height: 1.2;
   border-radius: 4px;
   white-space: nowrap;
   overflow: hidden;
@@ -579,8 +585,8 @@ body {
 .cal-bar.cont-right { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 /* 上段は「項目 / 中タスク」。薄く小さく添えて、主役は下段の小タスク名にする */
 .cal-bar .cal-bar-path {
-  font-size: 9px;
-  opacity: .72;
+  font-size: 11px;
+  opacity: .78;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
@@ -812,7 +818,7 @@ body {
 
 /* ---------- カレンダーの前後の月のマス ---------- */
 .cal-day.other-month { background: #fafbfc; }
-.cal-day.other-month .cal-date { color: #b9c0c9; font-size: 10px; }
+.cal-day.other-month .cal-date { color: #aab1bb; font-size: 12px; font-weight: 500; }
 
 /* ---------- ログイン ---------- */
 .logout-btn {

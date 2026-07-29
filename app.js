@@ -6,8 +6,9 @@ const DOW = ['日','月','火','水','木','金','土'];
 const LANE_H = 34;      // ガントバーの高さ（styles.css の --lane-h と合わせる）
 const LANE_GAP = 6;     // 同上 --lane-gap
 // カレンダーの予定バーは「項目 / 中タスク」と小タスク名の2段組みなので背が高い
-const CAL_BAR_H = 30;
-const CAL_BAR_GAP = 3;
+// （styles.css の --cal-bar-h / --cal-bar-gap と合わせること）
+const CAL_BAR_H = 38;
+const CAL_BAR_GAP = 4;
 const VIEW_KEY = 'gantt-app:view';
 const SCOPE_KEY = 'gantt-app:scope';
 
