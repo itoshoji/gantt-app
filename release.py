@@ -11,14 +11,15 @@
 
     1. 未コミットの変更があればコミットする（＝PCに保存）
     2. 1ファイル版をビルドして、Googleドライブの同期フォルダ vN/ に置く
-    3. つかいかた.txt を版番号を書き換えて一緒に置く
+
+置くのはHTML1つだけ。以前は つかいかた.txt も一緒に置いていたが、
+本人には不要なのでやめた（2026-07-29）。
 
 **GitHubへのpushはしない。** 本人が実際に触って感触を確かめてから、
 `--push` を付けて走らせるか `git push` する（2026-07-29 本人の指示）。
 本人は起動を全部Googleドライブから行うので、ここまでが「改良1回分」の1セット。
 """
 import argparse
-import datetime
 import re
 import subprocess
 import sys
@@ -35,27 +36,6 @@ DRIVE = (
     / "Library/CloudStorage/GoogleDrive-dear.crown@gmail.com"
     / "マイドライブ/スケジュール管理アプリ"
 )
-
-USAGE_TEMPLATE = """スケジュール管理アプリ v{n}
-
-【使い方】
-1. 「スケジュール管理_v{n}.html」をパソコンにダウンロードする
-2. ダウンロードしたファイルをダブルクリックする
-3. パスワードを入力する（この端末では次回から聞かれません）
-
-【メモ】
-・必要なファイルはこの1つだけです。他のファイルは要りません。
-・予定のデータはインターネット上（Supabase）に保存されます。
-  このファイルは「入り口」なので、どの端末から開いても同じ予定が出ます。
-・ファイルが古くなっても予定は消えません。新しい版に差し替えるだけでOKです。
-
-【新しい版が出たら】
-v{next}、v{next2}…と新しいフォルダが増えます。中の新しいHTMLを
-ダウンロードし直してください。古い版は消して構いません。
-
-作成日: {date}
-"""
-
 
 def git(*args: str, capture: bool = False) -> str:
     """gitを呼ぶ。失敗したらそこで止める。"""
@@ -112,17 +92,7 @@ def main() -> None:
     html_path.write_text(html, encoding="utf-8")
     print(f"{html_path} を作成しました（{len(html.encode('utf-8')):,} バイト）")
 
-    # 3. つかいかた.txt
-    (out_dir / "つかいかた.txt").write_text(
-        USAGE_TEMPLATE.format(
-            n=n, next=n + 1, next2=n + 2,
-            date=datetime.date.today().strftime("%Y-%m-%d"),
-        ),
-        encoding="utf-8",
-    )
-    print(f"{out_dir / 'つかいかた.txt'} を作成しました")
-
-    # 4. GitHubへ。既定ではやらない（本人が触って良ければ、が手順）
+    # 3. GitHubへ。既定ではやらない（本人が触って良ければ、が手順）
     if args.push and not args.no_git:
         git("push")
         print("GitHubへpushしました")
