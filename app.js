@@ -5,8 +5,9 @@ const MONTH_LABELS = ['4月','5月','6月','7月','8月','9月','10月','11月',
 const DOW = ['日','月','火','水','木','金','土'];
 const LANE_H = 34;      // ガントバーの高さ（styles.css の --lane-h と合わせる）
 const LANE_GAP = 6;     // 同上 --lane-gap
-const CAL_BAR_H = 18;   // カレンダーの予定バーの高さ
-const CAL_BAR_GAP = 2;
+// カレンダーの予定バーは「項目 / 中タスク」と小タスク名の2段組みなので背が高い
+const CAL_BAR_H = 30;
+const CAL_BAR_GAP = 3;
 const VIEW_KEY = 'gantt-app:view';
 const SCOPE_KEY = 'gantt-app:scope';
 
@@ -14,6 +15,15 @@ const SCOPE_KEY = 'gantt-app:scope';
 // 細かい色分けは中タスク側で自由に付ける。
 const GROUP_COLORS = ['#D9455F', '#3E7CB1'];        // 赤 / 青
 const DEFAULT_GROUP_COLOR = { routine: GROUP_COLORS[0], project: GROUP_COLORS[1] };
+
+// 中タスクの色。OSのカラーピッカーは選ぶまでの手数が多いので、
+// 一覧から1クリックで選べるようにする。色相をひと回りさせた20色。
+const TASK_PALETTE = [
+  '#C0392B', '#E05C43', '#E8743B', '#EE9B2F', '#D4A017',
+  '#8FA31E', '#5E9C3B', '#2E9E63', '#1FA08C', '#2496A8',
+  '#3E7CB1', '#3F5FA8', '#5B54B8', '#7B4FC0', '#9B4DBA',
+  '#C0459B', '#D14477', '#B5526B', '#8C6239', '#6B7280',
+];
 const TAG_LABEL = { routine: '定例', project: 'プロジェクト' };
 
 // Mac は Ctrl+クリックが右クリックなので、複製ドラッグに Ctrl を使えない。
@@ -620,7 +630,7 @@ function createBar(t, g, lane, vis) {
       { label: '名前を変更', onClick: () => { render(); const b = findBar(t.id); if (b) startNameEdit(b, Store.task(t.id)); } },
       { label: '小タスクを開く', onClick: () => { const b = findBar(t.id); if (b) showPopover(t.id, b); } },
       { label: 'カレンダーで見る', onClick: () => openCalendar({ ...idxToYM(t.fy, t.startMonth), taskId: t.id }) },
-      { label: '色を変更', onClick: () => pickTaskColor(t, g) },
+      { label: '色を変更', onClick: () => pickTaskColor(e, t, g) },
       { separator: true },
       { label: 'コピー', onClick: () => putTaskOnClipboard(t, 'copy') },
       { label: '切り取り', onClick: () => putTaskOnClipboard(t, 'cut') },
@@ -643,26 +653,59 @@ function createBar(t, g, lane, vis) {
   return bar;
 }
 
-// 色を選ばせる小さな仕掛け。<input type="color"> をその場に置いて開く
-function openColorPicker(current, onPick) {
-  const input = document.createElement('input');
-  input.type = 'color';
-  input.value = current || '#3E7CB1';
-  input.style.cssText = 'position:fixed;left:-9999px;top:0;';
-  document.body.appendChild(input);
-  input.addEventListener('change', () => {
-    onPick(input.value);
-    input.remove();
-  });
-  input.addEventListener('blur', () => setTimeout(() => input.remove(), 200));
-  input.click();
+// 色の一覧を右クリック位置に出して、1クリックで選ばせる
+const colorMenuEl = $('colorMenu');
+
+function openColorMenu(e, current, onPick, onReset) {
+  colorMenuEl.innerHTML = '';
+
+  const grid = document.createElement('div');
+  grid.className = 'color-grid';
+  for (const c of TASK_PALETTE) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'color-swatch' + (c.toLowerCase() === String(current).toLowerCase() ? ' is-active' : '');
+    b.style.background = c;
+    b.title = c;
+    b.addEventListener('click', () => { closeColorMenu(); onPick(c); });
+    grid.appendChild(b);
+  }
+  colorMenuEl.appendChild(grid);
+
+  if (onReset) {
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'color-reset';
+    reset.textContent = '項目の色に戻す';
+    reset.addEventListener('click', () => { closeColorMenu(); onReset(); });
+    colorMenuEl.appendChild(reset);
+  }
+
+  colorMenuEl.hidden = false;
+  const r = colorMenuEl.getBoundingClientRect();
+  const maxX = document.documentElement.clientWidth - r.width - 8;
+  const maxY = document.documentElement.clientHeight - r.height - 8;
+  colorMenuEl.style.left = (Math.max(8, Math.min(e.clientX, maxX)) + window.scrollX) + 'px';
+  colorMenuEl.style.top = (Math.max(8, Math.min(e.clientY, maxY)) + window.scrollY) + 'px';
 }
 
-function pickTaskColor(t, g) {
-  openColorPicker(taskColor(t, g), hex => {
-    History.act('色の変更', () => Store.updateTask(t.id, { color: hex }));
-    render();
-  });
+function closeColorMenu() { colorMenuEl.hidden = true; }
+
+document.addEventListener('pointerdown', e => {
+  if (!colorMenuEl.hidden && !colorMenuEl.contains(e.target)) closeColorMenu();
+}, true);
+window.addEventListener('scroll', closeColorMenu, true);
+
+function pickTaskColor(e, t, g) {
+  openColorMenu(e, t.color || taskColor(t, g),
+    hex => {
+      History.act('色の変更', () => Store.updateTask(t.id, { color: hex }));
+      render();
+    },
+    () => {
+      History.act('色の変更', () => Store.updateTask(t.id, { color: null }));
+      render();
+    });
 }
 
 const findBar = taskId => groupListEl.querySelector(`.bar[data-task-id="${taskId}"]`);
@@ -1359,6 +1402,8 @@ function scrollTodayIntoView() {
 // カレンダーに出す小タスクを集める。
 // 判定は「今の月」ではなく「画面に出ている7×n日ぶん」で行う。
 // こうしないと月をまたぐ予定が前後の月のマスに描けない。
+// 中タスクや項目から開いたときも、**他の予定は隠さず薄く出す**。
+// 予定を決めるときは他の予定との兼ね合いを見たいため、絞り込みではなく強調にしている。
 function calendarItems() {
   const from = dateNum(calGrid.start);
   const to = dateNum(calGrid.end);
@@ -1371,12 +1416,14 @@ function calendarItems() {
       const p = calPreview && calPreview.id === s.id
         ? { from: calPreview.from, to: calPreview.to }
         : { from: s.startDate, to: s.endDate || s.startDate };
-      return { s, t, g, from: p.from, to: p.to };
+      const focused =
+        (!calFilterTaskId && !calFilterGroupId) ||
+        (calFilterTaskId && s.taskId === calFilterTaskId) ||
+        (calFilterGroupId && t && t.groupId === calFilterGroupId);
+      return { s, t, g, from: p.from, to: p.to, focused: !!focused };
     })
     .filter(x =>
       inScope(x.g) && !x.g.hidden &&
-      (!calFilterTaskId || x.s.taskId === calFilterTaskId) &&
-      (!calFilterGroupId || (x.t && x.t.groupId === calFilterGroupId)) &&
       dateNum(x.to) >= from && dateNum(x.from) <= to);
 }
 
@@ -1389,8 +1436,8 @@ function renderCalendar() {
   const scope = $('calendarScope');
   const filterTask = calFilterTaskId ? Store.task(calFilterTaskId) : null;
   const filterGroup = calFilterGroupId ? Store.group(calFilterGroupId) : null;
-  scope.textContent = filterTask ? `${filterTask.name || '（無題）'} のみ`
-    : filterGroup ? `${filterGroup.name} のみ` : '';
+  scope.textContent = filterTask ? `${filterTask.name || '（無題）'} を編集中`
+    : filterGroup ? `${filterGroup.name} を編集中` : '';
 
   $('calendarHint').textContent = calSelectFor
     ? 'カレンダー上をドラッグして期間を選んでください（1日だけならクリック）'
@@ -1492,6 +1539,7 @@ function createCalBar(seg, weekStart) {
     + (contRight ? ' cont-right' : '')
     + (calPreview && calPreview.id === it.s.id ? ' is-ghost' : '');
   bar.dataset.subId = it.s.id;
+  if (!it.focused) bar.classList.add('is-unfocused');
   const st = barStyle(taskColor(it.t, it.g), 5);
   bar.style.background = st.bg;
   bar.style.color = st.fg;
@@ -1499,11 +1547,18 @@ function createCalBar(seg, weekStart) {
   bar.style.width = `calc(${(span / 7) * 100}% - ${insL + insR}px)`;
   bar.style.top = lane * (CAL_BAR_H + CAL_BAR_GAP) + 'px';
 
+  // 予定が増えると「これ何の仕事だっけ」となるので、
+  // 小タスク名の上に「項目 / 中タスク」を薄く添える
+  const path = document.createElement('span');
+  path.className = 'cal-bar-path';
+  path.textContent = `${it.g ? it.g.name : ''} / ${it.t ? (it.t.name || '（無題）') : ''}`;
+  bar.appendChild(path);
+
   const label = document.createElement('span');
   label.className = 'cal-bar-label';
   label.textContent = it.s.name || '（無題）';
   bar.appendChild(label);
-  bar.title = `${it.s.name || '（無題）'}（${it.t ? it.t.name : ''}）`;
+  bar.title = `${it.g ? it.g.name : ''} / ${it.t ? (it.t.name || '（無題）') : ''}\n${it.s.name || '（無題）'}`;
 
   // 実際の開始日・終了日がこの区間にあるときだけ、伸縮用の持ち手を出す
   if (!contLeft) bar.appendChild(calHandle('left'));
@@ -1853,6 +1908,32 @@ document.addEventListener('keydown', e => {
   // 文字入力中はアプリ側のショートカットを横取りしない
   const tag = e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+
+  // 選択中のものを Delete / Backspace で消す（確認なし。戻すのは Cmd+Z）
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selection) {
+    if (selection.kind === 'task') {
+      const t = Store.task(selection.id);
+      if (!t) return;
+      e.preventDefault();
+      History.act('削除', () => {
+        if (popoverTaskId === t.id) hidePopover();
+        Store.deleteTask(t.id);
+      });
+      clearSelection();
+      render();
+      if (!$('calendarOverlay').hidden) renderCalendar();
+    } else if (selection.kind === 'subtask') {
+      const s = Store.subtask(selection.id);
+      if (!s) return;
+      e.preventDefault();
+      History.act('削除', () => Store.deleteSubtask(s.id));
+      clearSelection();
+      render();
+      if (!$('calendarOverlay').hidden) renderCalendar();
+    }
+    return;
+  }
+
   if (!isCmd(e)) return;
 
   const key = e.key.toLowerCase();
