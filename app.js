@@ -129,52 +129,32 @@ function taskColor(t, g) {
 // 積み上がるので、同じ濃さで塗ると画面が真っ黒に近くなって読めなくなる。
 // 「下地は淡く、色は左端の帯だけ」にして、色の面積を減らす。
 // 文字色も同じ色相から作るので、淡くしても何の予定かは分かる。
-function calBarStyle(baseHex) {
+// 下地・文字・輪郭の色を、項目の色から作る。
+// bgL などは「その色をどれだけ薄くするか」。数字を変えるだけで色味を揃えたまま調整できる
+function tint(baseHex, { bgL, bgS = 68, fgL = 27, fgS = 52, lineL = null, lineS = 45 }) {
   const { h, s } = hexToHsl(baseHex);
-  return {
-    bg: `hsl(${h.toFixed(0)} ${Math.min(s, 68).toFixed(0)}% 94%)`,
-    fg: `hsl(${h.toFixed(0)} ${Math.min(s, 52).toFixed(0)}% 27%)`,
-    accent: baseHex,
-  };
+  const hsl = (sat, l) => `hsl(${h.toFixed(0)} ${Math.min(s, sat).toFixed(0)}% ${l.toFixed(0)}%)`;
+  const out = { bg: hsl(bgS, bgL), fg: hsl(fgS, fgL), accent: baseHex };
+  if (lineL !== null) out.line = hsl(lineS, lineL);
+  return out;
 }
+
+const calBarStyle = baseHex => tint(baseHex, { bgL: 94 });
 
 // ガントのバーもカレンダーと同じ組み立てにする（淡い下地＋左端の色帯＋濃い文字）。
 // 以前は小タスクが多いほど色そのものまで濃くしていたが、行が増えると
 // カレンダーと同じ理由で画面が重くなる。濃さの差は「気持ち変わる」程度に留め、
 // 何個あるかはバー右端の数字で読ませる。
-function barStyle(baseHex, subCount) {
-  const { h, s } = hexToHsl(baseHex);
-  const t = Math.min(subCount, 5) / 5;
-  return {
-    bg: `hsl(${h.toFixed(0)} ${Math.min(s, 68).toFixed(0)}% ${(95 - 7 * t).toFixed(0)}%)`,
-    fg: `hsl(${h.toFixed(0)} ${Math.min(s, 52).toFixed(0)}% 27%)`,
-    accent: baseHex,
-  };
-}
+const barStyle = (baseHex, subCount) =>
+  tint(baseHex, { bgL: 95 - 7 * (Math.min(subCount, 5) / 5) });
 
 // 詳細ビューは中タスクと小タスクが上下に並ぶ。同じ「淡い下地＋色帯」で描くと
 // 見分けが付かないので、ここだけ役割で形を変える。
 //   中タスク … 期間を示す「屋根」。角ばらせて、濃いめの下地＋上辺に色の帯＋太字
 //   小タスク … 実際の作業。丸いピルにして、ほぼ白＋細い輪郭＋左に色の点
 // 色の面積を増やさない方針はそのまま（濃さではなく形で分ける）
-function dvTaskStyle(baseHex) {
-  const { h, s } = hexToHsl(baseHex);
-  return {
-    bg: `hsl(${h.toFixed(0)} ${Math.min(s, 60).toFixed(0)}% 91%)`,
-    fg: `hsl(${h.toFixed(0)} ${Math.min(s, 52).toFixed(0)}% 24%)`,
-    accent: baseHex,
-  };
-}
-
-function dvSubStyle(baseHex) {
-  const { h, s } = hexToHsl(baseHex);
-  return {
-    bg: `hsl(${h.toFixed(0)} ${Math.min(s, 55).toFixed(0)}% 98%)`,
-    fg: `hsl(${h.toFixed(0)} ${Math.min(s, 52).toFixed(0)}% 30%)`,
-    line: `hsl(${h.toFixed(0)} ${Math.min(s, 45).toFixed(0)}% 79%)`,
-    accent: baseHex,
-  };
-}
+const dvTaskStyle = baseHex => tint(baseHex, { bgL: 91, bgS: 60, fgL: 24 });
+const dvSubStyle = baseHex => tint(baseHex, { bgL: 98, bgS: 55, fgL: 30, lineL: 79 });
 
 // ---------- 画面状態 ----------
 let viewMode = localStorage.getItem(VIEW_KEY) || 'year';   // 'year' | 'quarter' | 'day'
@@ -945,16 +925,21 @@ function gatherStraySubtasks(t) {
   }
 }
 
-function startBarDrag(e, t, bar, vis) {
+// 中タスクのドラッグ（移動・伸縮・複製）。
+//
+// 一覧と詳細ビューの両方で使う。違うのは「1マスが何pxか」と「バーを仮に置き直す方法」
+// だけなので、その2つを外から渡してもらい、中身は1つに保つ。
+// **ここを片方だけ直す、ということが起きないようにするための作り。**
+// 以前は一覧用と詳細ビュー用で76行と73行のほぼ同じ関数が並んでいた。
+function startTaskDrag(e, t, bar, ctx) {
   if (e.button !== 0) return;
   if (e.target.tagName === 'INPUT') return;
   e.stopPropagation();
 
   const mode = e.target.dataset.side ? 'resize-' + e.target.dataset.side : 'move';
   const duplicating = mode === 'move' && isDuplicateDrag(e);   // Mac=⌥ / Win=Ctrl で複製
-  const lanesEl = bar.closest('.lanes');
-  const count = vis.to - vis.from + 1;
-  const cellW = lanesEl.getBoundingClientRect().width / count;
+  const cellW = ctx.cellW();
+  const place = ctx.place;
   const startX = e.clientX;
   const orig = { s: t.startMonth, e: t.endMonth };
   let moved = false;
@@ -979,7 +964,7 @@ function startBarDrag(e, t, bar, vis) {
       const en = Math.max(Math.min(orig.e + delta, 11), orig.s);
       next = { s: orig.s, e: en };
     }
-    applyBarGeometry(bar, next.s, next.e, vis);
+    place(next.s, next.e);
   };
 
   const onUp = () => {
@@ -1020,6 +1005,26 @@ function startBarDrag(e, t, bar, vis) {
 
   bar.addEventListener('pointermove', onMove);
   bar.addEventListener('pointerup', onUp);
+}
+
+// 一覧のバー（横軸＝表示中の月）
+function startBarDrag(e, t, bar, vis) {
+  startTaskDrag(e, t, bar, {
+    cellW: () => {
+      const count = vis.to - vis.from + 1;
+      return bar.closest('.lanes').getBoundingClientRect().width / count;
+    },
+    place: (s, en) => applyBarGeometry(bar, s, en, vis),
+  });
+}
+
+// 詳細ビューのバー（横軸＝一続きの年度。月の目盛りのときだけ動かせる）
+function dvStartTaskDrag(e, t, bar, axis) {
+  startTaskDrag(e, t, bar, {
+    cellW: () => bar.closest('.dv-block-body').getBoundingClientRect().width / axis.count,
+    place: (s, en) =>
+      dvPlace(bar, dvTaskSpan({ ...t, startMonth: s, endMonth: en }, axis), axis),
+  });
 }
 
 // ==========================================================
@@ -2113,10 +2118,6 @@ function dvSpanCols(span, axis) {
   const to = Math.min(span.to, axis.to);
   return Math.max(to - from + 1, 0);
 }
-function dvSpanWidth(span, axis, colW) {
-  return dvSpanCols(span, axis) * colW;
-}
-
 // 余白を付けずにぴったり置く（空きマスの層など、目盛りと1マスずれてはいけないもの）
 function dvPlaceExact(el, span, axis) {
   const from = Math.max(span.from, axis.from);
@@ -2719,81 +2720,6 @@ function dvEditSubName(bar, s) {
     if (e.key === 'Escape') finish(true);
   });
   input.addEventListener('pointerdown', e => e.stopPropagation());
-}
-
-// 中タスクのドラッグ（月の単位。年・四半期のときだけ）
-function dvStartTaskDrag(e, t, bar, axis) {
-  if (e.button !== 0) return;
-  if (e.target.tagName === 'INPUT') return;
-  e.stopPropagation();
-
-  const mode = e.target.dataset.side ? 'resize-' + e.target.dataset.side : 'move';
-  const duplicating = mode === 'move' && isDuplicateDrag(e);
-  const track = bar.closest('.dv-block-body');
-  const cellW = track.getBoundingClientRect().width / axis.count;
-  const startX = e.clientX;
-  const orig = { s: t.startMonth, e: t.endMonth };
-  let moved = false;
-  let next = { ...orig };
-
-  bar.setPointerCapture(e.pointerId);
-
-  const onMove = ev => {
-    if (Math.abs(ev.clientX - startX) > 3) moved = true;
-    if (!moved) return;
-    bar.classList.add('is-dragging');
-    const delta = Math.round((ev.clientX - startX) / cellW);
-    if (mode === 'move') {
-      const span = orig.e - orig.s;
-      const s = Math.min(Math.max(orig.s + delta, 0), 11 - span);
-      next = { s, e: s + span };
-    } else if (mode === 'resize-left') {
-      const s = Math.min(Math.max(orig.s + delta, 0), orig.e);
-      next = { s, e: orig.e };
-    } else {
-      const en = Math.max(Math.min(orig.e + delta, 11), orig.s);
-      next = { s: orig.s, e: en };
-    }
-    dvPlace(bar, dvTaskSpan({ ...t, startMonth: next.s, endMonth: next.e }, axis), axis);
-  };
-
-  const onUp = () => {
-    bar.removeEventListener('pointermove', onMove);
-    bar.removeEventListener('pointerup', onUp);
-    bar.classList.remove('is-dragging');
-    if (!moved) { setSelection({ kind: 'task', id: t.id }); return; }
-
-    if (next.s !== orig.s || next.e !== orig.e) {
-      if (duplicating) {
-        History.act('複製', () => {
-          const nt = Store.addTask({
-            groupId: t.groupId, fy: t.fy,
-            startMonth: next.s, endMonth: next.e,
-            name: t.name, color: t.color,
-          });
-          const delta = next.s - orig.s;
-          for (const s of Store.subtasksOf(t.id)) {
-            Store.addSubtask({
-              taskId: nt.id, name: s.name,
-              startDate: s.startDate ? shiftDateByMonths(s.startDate, delta) : null,
-              endDate: s.endDate ? shiftDateByMonths(s.endDate, delta) : null,
-            });
-          }
-          setSelection({ kind: 'task', id: nt.id });
-        });
-      } else {
-        History.act(mode === 'move' ? '移動' : '期間の変更', () => {
-          Store.updateTask(t.id, { startMonth: next.s, endMonth: next.e });
-          if (mode === 'move') shiftSubtasks(t.id, next.s - orig.s);
-          else gatherStraySubtasks(Store.task(t.id));
-        });
-      }
-    }
-    render();
-  };
-
-  bar.addEventListener('pointermove', onMove);
-  bar.addEventListener('pointerup', onUp);
 }
 
 // 小タスクのドラッグ（日の単位）
