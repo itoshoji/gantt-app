@@ -22,6 +22,13 @@
     <button type="button" data-view="day">日</button>
   </div>
 
+  <!-- チェックした項目に対する操作。表と一緒にスクロールしないよう、ここ（固定の帯）に置く -->
+  <div class="select-group" id="selectGroup" hidden>
+    <span class="select-count" id="selectCount"></span>
+    <button type="button" class="btn primary select-detail" id="selectDetail">詳細を見る</button>
+    <button type="button" class="btn ghost select-clear" id="selectClear">解除</button>
+  </div>
+
   <div class="range-nav" id="rangeNav">
     <button id="prevRange" class="icon-btn" title="前へ">‹</button>
     <span id="rangeLabel" class="range-label"></span>
@@ -49,14 +56,6 @@
 
 <!-- ガントビュー（年 / 四半期） -->
 <main class="board" id="boardView">
-  <!-- チェックした項目に対する操作。高さは常に確保して、出入りで表が上下に動かないようにする -->
-  <div class="select-bar" id="selectBar">
-    <span class="select-hint" id="selectHint"></span>
-    <span class="select-count" id="selectCount" hidden></span>
-    <button type="button" class="btn primary select-detail" id="selectDetail" hidden>詳細を見る</button>
-    <button type="button" class="btn ghost select-clear" id="selectClear" hidden>選択を解除</button>
-  </div>
-
   <div class="row header-row">
     <div class="head-cell">項目</div>
     <div class="months" id="monthHeader"></div>

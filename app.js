@@ -428,8 +428,8 @@ function render() {
   paintClipboard();
 }
 
-// チェックした項目に対する操作の帯。
-// 出したり消したりすると表が上下に動くので、高さは常に確保しておく
+// チェックした項目に対する操作。
+// 表と一緒にスクロールして見失わないよう、上の固定の帯に置いてある
 function renderSelectBar() {
   // 消えた項目や、いま見ていない側（仕事／プライベート）の項目は対象から外す
   for (const id of [...checkedGroupIds]) {
@@ -437,12 +437,8 @@ function renderSelectBar() {
     if (!g || !inScope(g)) checkedGroupIds.delete(id);
   }
   const n = checkedGroupIds.size;
-  $('selectHint').hidden = n > 0;
-  $('selectHint').textContent = '項目の左のチェックを入れると、まとめて詳細を見られます。';
-  $('selectCount').hidden = n === 0;
-  $('selectCount').textContent = `${n}件を選択中`;
-  $('selectDetail').hidden = n === 0;
-  $('selectClear').hidden = n === 0;
+  $('selectGroup').hidden = n === 0;
+  $('selectCount').textContent = `${n}件`;
 }
 
 function clearCheckedGroups() {
@@ -2016,22 +2012,24 @@ const DV_HEAD_W = 210;    // 左の見出し列の幅（同上 --dv-head-w）
 // 1日ぶんが細くなりすぎて小タスクが読めない。Ctrl+ホイールで広げられるようにする
 const DV_COL_MIN = { day: 22, month: 56 };
 const DV_COL_MAX = { day: 220, month: 640 };
+// これより細いバーは、名前をバーの外に出す（潰れた字を見せない）
+const DV_NARROW = { task: 84, sub: 88 };
 
 let dvOpen = false;
 let dvGroupIds = [];
 let dvMode = localStorage.getItem(DV_MODE_KEY) || 'month';
-let dvFy = fy;
-let dvQuarter = quarter;
-let dvY = today.getFullYear();
-let dvM = today.getMonth() + 1;
-let dvWeekStart = startOfWeek(TODAY);
+let dvFy = fy;            // 目盛りが覆う年度
 let dvColW = null;        // null なら画面の幅に合わせる。数字が入っていれば拡大中
+let dvPendingLeft = null; // 描画のあと、この位置（通し月／通し日）を左端に持ってくる
+
+// 画面に一度に見せる列の数。1列の幅はここから割り出す
+const DV_WINDOW = { year: 12, quarter: 3, month: 31, week: 7 };
 
 // 画面の幅にちょうど収まる1列の幅。ただし細くなりすぎる手前で止める
 function dvFitColW(axis) {
   const el = $('detailScroll');
   const avail = (el ? el.clientWidth : 1200) - DV_HEAD_W;
-  return Math.max(avail / axis.count, DV_COL_MIN[axis.unit]);
+  return Math.max(avail / DV_WINDOW[dvMode], DV_COL_MIN[axis.unit]);
 }
 
 // いま使う1列の幅
@@ -2039,25 +2037,68 @@ function dvCurColW(axis) {
   return dvColW || dvFitColW(axis);
 }
 
-function startOfWeek(iso) { return addDays(iso, -dowOf(iso)); }
 const fyOf = (y, m) => (m >= 4 ? y : y - 1);
+const fyOfIso = iso => { const p = parseDate(iso); return fyOf(p.y, p.m); };
 
-// いま出している横軸。month なら通し月番号、day なら通し日番号で範囲を持つ
+// いま出している横軸。month なら通し月番号、day なら通し日番号で範囲を持つ。
+//
+// ⚠ 目盛りは「画面に見えるぶん」ではなく**年度まるごと（前後に余白つき）を一続き**で持つ。
+// 月や週で切ってしまうと、月末から翌月頭にかかる予定が見えず、月跨ぎ・週跨ぎを
+// 確かめられなくなるため。画面に見せる量は1列の幅（DV_WINDOW）で決めて、
+// あとは横スクロールで繋がったまま行き来する。
 function dvAxis() {
   if (dvMode === 'year' || dvMode === 'quarter') {
-    const idxFrom = dvMode === 'quarter' ? dvQuarter * 3 : 0;
-    const idxTo = dvMode === 'quarter' ? dvQuarter * 3 + 2 : 11;
-    const a = idxToYM(dvFy, idxFrom);
-    const b = idxToYM(dvFy, idxTo);
+    const from = absMonth(dvFy - 1, 4);      // 前年度4月
+    const to = absMonth(dvFy + 2, 3);        // 翌年度3月
+    const a = absToYM(from);
+    const b = absToYM(to);
     return {
-      unit: 'month', idxFrom, idxTo,
-      from: absMonth(a.y, a.m), to: absMonth(b.y, b.m),
-      count: idxTo - idxFrom + 1,
+      unit: 'month', from, to, count: to - from + 1,
+      fyFrom: fyOf(a.y, a.m), fyTo: fyOf(b.y, b.m),
     };
   }
-  const start = dvMode === 'month' ? ymd(dvY, dvM, 1) : dvWeekStart;
-  const end = dvMode === 'month' ? ymd(dvY, dvM, daysInMonth(dvY, dvM)) : addDays(dvWeekStart, 6);
-  return { unit: 'day', start, end, from: ord(start), to: ord(end), count: dayDiff(start, end) + 1 };
+  const start = addDays(ymd(dvFy, 4, 1), -31);        // 年度の頭の1ヶ月前から
+  const end = addDays(ymd(dvFy + 1, 3, 31), 31);      // 年度の終わりの1ヶ月後まで
+  return {
+    unit: 'day', start, end,
+    from: ord(start), to: ord(end), count: dayDiff(start, end) + 1,
+    fyFrom: fyOfIso(start), fyTo: fyOfIso(end),
+  };
+}
+
+// 目盛りの単位そのままの「今日」
+function dvTodayPos(axis) {
+  return axis.unit === 'month'
+    ? absMonth(today.getFullYear(), today.getMonth() + 1)
+    : ord(TODAY);
+}
+
+// いま左端に出ている列（目盛りの単位で）
+function dvLeftPos(axis, colW) {
+  const el = $('detailScroll');
+  if (!el) return axis.from;
+  const i = Math.round(el.scrollLeft / colW);
+  return axis.from + Math.max(0, Math.min(i, axis.count - 1));
+}
+
+// 左端に出ている位置を「日付」に均す（表示を切り替えても同じ場所に居られるように）
+function dvPosToIso(axis, pos) {
+  if (axis.unit === 'month') {
+    const { y, m } = absToYM(pos);
+    return ymd(y, m, 1);
+  }
+  return addDays(axis.start, pos - axis.from);
+}
+function dvIsoToPos(axis, iso) {
+  const p = parseDate(iso);
+  return axis.unit === 'month' ? absMonth(p.y, p.m) : ord(iso);
+}
+
+// 指定した位置を左端に持ってくる
+function dvScrollToPos(axis, colW, pos) {
+  const el = $('detailScroll');
+  if (!el) return;
+  el.scrollLeft = Math.max(0, (pos - axis.from) * colW);
 }
 
 // 中タスクの期間を、いまの横軸の単位に直す
@@ -2082,26 +2123,29 @@ function dvPlace(el, span, axis) {
   el.classList.toggle('clip-right', clipR);
 }
 
-// 画面に出る幅（px）。名前がバーに収まるかの判定に使う
-function dvSpanWidth(span, axis, colW) {
+// 画面に出る列数。名前がバーに収まるかの判定に使う
+function dvSpanCols(span, axis) {
   const from = Math.max(span.from, axis.from);
   const to = Math.min(span.to, axis.to);
-  return Math.max(to - from + 1, 0) * colW;
+  return Math.max(to - from + 1, 0);
+}
+function dvSpanWidth(span, axis, colW) {
+  return dvSpanCols(span, axis) * colW;
+}
+
+// 余白を付けずにぴったり置く（空きマスの層など、目盛りと1マスずれてはいけないもの）
+function dvPlaceExact(el, span, axis) {
+  const from = Math.max(span.from, axis.from);
+  const to = Math.min(span.to, axis.to);
+  el.style.left = `${((from - axis.from) / axis.count) * 100}%`;
+  el.style.width = `${((to - from + 1) / axis.count) * 100}%`;
 }
 
 // 表示範囲にかかる中タスクを集める。
 // 週や月の表示は年度をまたぐことがあるので、かかる年度を両方見る
 function dvTasksOf(groupId, axis) {
-  const years = new Set();
-  if (axis.unit === 'month') years.add(dvFy);
-  else {
-    const a = parseDate(axis.start);
-    const b = parseDate(axis.end);
-    years.add(fyOf(a.y, a.m));
-    years.add(fyOf(b.y, b.m));
-  }
   const out = [];
-  for (const y of years) {
+  for (let y = axis.fyFrom; y <= axis.fyTo; y++) {
     for (const t of Store.tasksOf(groupId, y)) {
       const sp = dvTaskSpan(t, axis);
       if (sp.to >= axis.from && sp.from <= axis.to) out.push({ t, sp });
@@ -2116,9 +2160,12 @@ function openDetail() {
   if (!targets.length) return;
   dvGroupIds = targets.map(g => g.id);
   dvFy = fy;
-  dvQuarter = quarter;
   dvColW = null;
   dvOpen = true;
+  // 今日がその年度に入っていれば今日から、入っていなければ年度の頭から見せる
+  dvPendingLeft = (fy === currentFiscalYear())
+    ? dvTodayPos(dvAxis())
+    : dvIsoToPos(dvAxis(), ymd(fy, 4, 1));
   hidePopover();
   $('detailOverlay').hidden = false;
   // 開いている間は背後のページを動かさない。
@@ -2135,47 +2182,67 @@ function closeDetail() {
   render();
 }
 
-function dvRangeLabel() {
-  if (dvMode === 'year') return `${dvFy}年度`;
-  if (dvMode === 'quarter') {
-    return `${dvFy}年度 ${MONTH_LABELS[dvQuarter * 3]}〜${MONTH_LABELS[dvQuarter * 3 + 2]}`;
+// いま画面に出ている範囲を見出しにする。目盛りは一続きなので、
+// 「どの年度か」ではなく「いまどこを見ているか」を出す
+function dvRangeLabel(axis, colW) {
+  const el = $('detailScroll');
+  const cols = Math.max(Math.round(((el ? el.clientWidth : 1200) - DV_HEAD_W) / colW), 1);
+  const left = dvLeftPos(axis, colW);
+  const right = Math.min(left + cols - 1, axis.to);
+
+  if (axis.unit === 'month') {
+    const a = absToYM(left);
+    const b = absToYM(right);
+    return a.y === b.y
+      ? `${a.y}年 ${a.m}月〜${b.m}月`
+      : `${a.y}年${a.m}月 〜 ${b.y}年${b.m}月`;
   }
-  if (dvMode === 'month') return `${dvY}年${dvM}月`;
-  const e = addDays(dvWeekStart, 6);
-  return `${fmtShort(dvWeekStart)}(${DOW[dowOf(dvWeekStart)]}) 〜 ${fmtShort(e)}(${DOW[dowOf(e)]})`;
+  const a = addDays(axis.start, left - axis.from);
+  const b = addDays(axis.start, right - axis.from);
+  const pa = parseDate(a);
+  return `${pa.y}年 ${fmtShort(a)}(${DOW[dowOf(a)]}) 〜 ${fmtShort(b)}(${DOW[dowOf(b)]})`;
 }
 
-function dvShift(delta) {
-  if (dvMode === 'year') dvFy += delta;
-  else if (dvMode === 'quarter') {
-    dvQuarter += delta;
-    while (dvQuarter > 3) { dvQuarter -= 4; dvFy++; }
-    while (dvQuarter < 0) { dvQuarter += 4; dvFy--; }
-  } else if (dvMode === 'month') {
-    const { y, m } = absToYM(absMonth(dvY, dvM) + delta);
-    dvY = y;
-    dvM = m;
-  } else {
-    dvWeekStart = addDays(dvWeekStart, delta * 7);
+// 前へ／次へ。目盛りが一続きなので、1画面ぶん横に送るだけ。
+// 端まで来たら年度をずらして描き直し、続きから見せる
+function dvShift(dir) {
+  const el = $('detailScroll');
+  const axis = dvAxis();
+  const colW = dvCurColW(axis);
+  const page = Math.max(el.clientWidth - DV_HEAD_W, colW);
+  const max = Math.max(colW * axis.count - (el.clientWidth - DV_HEAD_W), 0);
+  const target = el.scrollLeft + dir * page;
+
+  if (target >= -1 && target <= max + 1) {
+    el.scrollLeft = Math.min(Math.max(target, 0), max);
+    dvSyncRangeLabel();
+    return;
   }
+
+  // 目盛りの端。年度をずらして、いま見ている場所の続きへ
+  const iso = dvPosToIso(axis, dvLeftPos(axis, colW));
+  dvFy += dir;
+  const next = dvAxis();
+  dvPendingLeft = dvIsoToPos(next, iso) + dir * Math.round(page / colW);
   renderDetail();
 }
 
+// 今日を画面の一番左に持ってくる
 function dvGoToday() {
   dvFy = currentFiscalYear();
-  dvQuarter = Math.floor((ymToIdx(dvFy, today.getFullYear(), today.getMonth() + 1) || 0) / 3);
-  dvY = today.getFullYear();
-  dvM = today.getMonth() + 1;
-  dvWeekStart = startOfWeek(TODAY);
+  dvPendingLeft = dvTodayPos(dvAxis());
   renderDetail();
 }
 
-// 今日を含む期間を出しているか
+// 今日が画面に見えているか
 function dvShowingToday() {
   const axis = dvAxis();
-  if (axis.unit === 'day') return ord(TODAY) >= axis.from && ord(TODAY) <= axis.to;
-  const cur = absMonth(today.getFullYear(), today.getMonth() + 1);
-  return cur >= axis.from && cur <= axis.to;
+  const colW = dvCurColW(axis);
+  const el = $('detailScroll');
+  const cols = Math.max(Math.round(((el ? el.clientWidth : 1200) - DV_HEAD_W) / colW), 1);
+  const left = dvLeftPos(axis, colW);
+  const pos = dvTodayPos(axis);
+  return pos >= left && pos <= left + cols - 1;
 }
 
 // ---------- 描画 ----------
@@ -2191,8 +2258,6 @@ function renderDetail() {
   document.querySelectorAll('#detailToggle button').forEach(b => {
     b.classList.toggle('is-active', b.dataset.dv === dvMode);
   });
-  $('dvRangeLabel').textContent = dvRangeLabel();
-  $('dvToday').classList.toggle('is-current', dvShowingToday());
   $('dvFit').hidden = dvColW === null;
   $('detailNote').textContent = (axis.unit === 'month'
     ? '小タスクは「月」「週」で出ます'
@@ -2238,8 +2303,25 @@ function renderDetail() {
     body.appendChild(sec);
   }
 
+  // 描き直したあとに、行きたかった場所へ寄せる
+  if (dvPendingLeft !== null) {
+    dvScrollToPos(axis, colW, dvPendingLeft);
+    dvPendingLeft = null;
+  }
+  dvSyncRangeLabel();
+
   paintSelection();
   paintClipboard();
+}
+
+// 見出しと「今日」ボタンは、いま見えている範囲で決まる。
+// 横スクロールのたびに呼ばれるので、描き直さず文字だけ差し替える
+function dvSyncRangeLabel() {
+  if (!dvOpen) return;
+  const axis = dvAxis();
+  const colW = dvCurColW(axis);
+  $('dvRangeLabel').textContent = dvRangeLabel(axis, colW);
+  $('dvToday').classList.toggle('is-current', dvShowingToday());
 }
 
 function renderDetailAxis(axis, colW) {
@@ -2253,37 +2335,43 @@ function renderDetailAxis(axis, colW) {
 
   const cols = document.createElement('div');
   cols.className = 'dv-axis-cols';
-  cols.style.gridTemplateColumns = `repeat(${axis.count}, ${colW}px)`;
+  // 幅は CSS 変数で持たせる。拡大のたびに作り直さず、変数だけ差し替えて済ませるため
+  cols.style.gridTemplateColumns = `repeat(${axis.count}, var(--dv-col-w))`;
   // 列が細いときは曜日を省いて日付だけにする（潰れた字を出さない）
   cols.classList.toggle('is-tight', axis.unit === 'day' && colW < 30);
 
   if (axis.unit === 'month') {
-    const curIdx = ymToIdx(dvFy, today.getFullYear(), today.getMonth() + 1);
-    for (let i = axis.idxFrom; i <= axis.idxTo; i++) {
+    const cur = absMonth(today.getFullYear(), today.getMonth() + 1);
+    for (let a = axis.from; a <= axis.to; a++) {
+      const { y, m } = absToYM(a);
       const c = document.createElement('div');
-      c.className = 'dv-col-head' + (i === curIdx ? ' is-current' : '');
-      c.textContent = MONTH_LABELS[i];
+      c.className = 'dv-col-head' + (a === cur ? ' is-current' : '');
+      // 年度の頭（4月）だけ年を添えて、どこを見ているか分かるようにする
+      c.textContent = m === 4 ? `${y}年4月` : `${m}月`;
       c.title = 'クリックでこの月のカレンダー';
-      c.addEventListener('click', () => openCalendar({ ...idxToYM(dvFy, i) }));
+      c.addEventListener('click', () => openCalendar({ y, m }));
       cols.appendChild(c);
     }
   } else {
     for (let i = 0; i < axis.count; i++) {
       const iso = addDays(axis.start, i);
       const kind = dayKind(iso);
+      const p = parseDate(iso);
       const c = document.createElement('div');
+      // 目盛りが一続きなので、月の変わり目に区切りを入れて迷子にならないようにする
       c.className = 'dv-col-head is-day'
         + (kind ? ' is-' + kind : '')
-        + (iso === TODAY ? ' is-today' : '');
+        + (iso === TODAY ? ' is-today' : '')
+        + (p.d === 1 ? ' is-month-start' : '');
       const dow = document.createElement('span');
       dow.className = 'dv-dow';
       dow.textContent = DOW[dowOf(iso)];
       const num = document.createElement('span');
       num.className = 'dv-dnum';
-      num.textContent = parseDate(iso).d;
+      num.textContent = p.d === 1 ? `${p.m}/1` : p.d;
       c.append(dow, num);
       const hol = Holidays.name(iso);
-      if (hol) c.title = hol;
+      c.title = hol ? `${p.m}月${p.d}日 ${hol}` : `${p.m}月${p.d}日`;
       cols.appendChild(c);
     }
   }
@@ -2324,8 +2412,8 @@ function dvBuildBlock(t, g, sp, axis, colW) {
 
   const grid = document.createElement('div');
   grid.className = 'dv-grid';
-  grid.style.gridTemplateColumns = `repeat(${axis.count}, ${colW}px)`;
-  const curIdx = ymToIdx(dvFy, today.getFullYear(), today.getMonth() + 1);
+  grid.style.gridTemplateColumns = `repeat(${axis.count}, var(--dv-col-w))`;
+  const curMonth = absMonth(today.getFullYear(), today.getMonth() + 1);
   for (let i = 0; i < axis.count; i++) {
     const c = document.createElement('div');
     c.className = 'dv-gridline';
@@ -2334,7 +2422,8 @@ function dvBuildBlock(t, g, sp, axis, colW) {
       const kind = dayKind(iso);
       if (kind) c.classList.add('is-' + kind);
       if (iso === TODAY) c.classList.add('is-today');
-    } else if (axis.idxFrom + i === curIdx) {
+      if (parseDate(iso).d === 1) c.classList.add('is-month-start');
+    } else if (axis.from + i === curMonth) {
       c.classList.add('is-today');
     }
     grid.appendChild(c);
@@ -2363,8 +2452,10 @@ function dvBuildTaskBar(t, g, sp, axis, colW) {
   bar.style.color = fg;
   bar.style.setProperty('--accent-color', accent);
   dvPlace(bar, sp, axis);
-  // 幅が足りないと名前が「四…」のように潰れる。狭いときは名前をバーの外に出す
-  if (dvSpanWidth(sp, axis, colW) < 84) bar.classList.add('is-narrow');
+  // 幅が足りないと名前が「四…」のように潰れる。狭いときは名前をバーの外に出す。
+  // 何列ぶんかを覚えておいて、拡大したときは描き直さずここだけ付け外しする
+  bar.dataset.cols = dvSpanCols(sp, axis);
+  bar.classList.toggle('is-narrow', dvSpanCols(sp, axis) * colW < DV_NARROW.task);
 
   const label = document.createElement('span');
   label.className = 'label';
@@ -2459,15 +2550,19 @@ function dvBuildSubArea(t, g, sp, axis, colW) {
   dvPlace(scope, sp, axis);
   area.appendChild(scope);
 
-  const cells = document.createElement('div');
-  cells.className = 'dv-sub-cells';
-  cells.style.gridTemplateColumns = `repeat(${axis.count}, ${colW}px)`;
-  for (let i = 0; i < axis.count; i++) {
-    const iso = addDays(axis.start, i);
-    const inside = ord(iso) >= sp.from && ord(iso) <= sp.to;
-    const c = document.createElement('div');
-    c.className = 'dv-sub-cell' + (inside ? '' : ' is-outside');
-    if (inside) {
+  // 空きマスは中タスクの期間のぶんだけ置く。
+  // 目盛りが年度まるごとに伸びたので、全部作ると無駄に重くなる
+  const cellFrom = Math.max(sp.from, axis.from);
+  const cellTo = Math.min(sp.to, axis.to);
+  if (cellTo >= cellFrom) {
+    const cells = document.createElement('div');
+    cells.className = 'dv-sub-cells';
+    dvPlaceExact(cells, { from: cellFrom, to: cellTo }, axis);
+    cells.style.gridTemplateColumns = `repeat(${cellTo - cellFrom + 1}, var(--dv-col-w))`;
+    for (let d = cellFrom; d <= cellTo; d++) {
+      const iso = addDays(axis.start, d - axis.from);
+      const c = document.createElement('div');
+      c.className = 'dv-sub-cell';
       c.title = 'ダブルクリックで小タスクを作る';
       c.addEventListener('dblclick', () => dvCreateSubtask(t, iso));
       c.addEventListener('contextmenu', e => {
@@ -2479,10 +2574,10 @@ function dvBuildSubArea(t, g, sp, axis, colW) {
         }
         openContextMenu(e, `${t.name || '（無題）'} / ${fmtShort(iso)}`, items.concat(undoMenuItems()));
       });
+      cells.appendChild(c);
     }
-    cells.appendChild(c);
+    area.appendChild(cells);
   }
-  area.appendChild(cells);
 
   const items = Store.subtasksOf(t.id)
     .filter(s => s.startDate)
@@ -2514,7 +2609,9 @@ function dvBuildSubBar(s, t, g, x, axis, colW) {
   bar.style.top = x.lane * (DV_SUB_H + DV_SUB_GAP) + 'px';
   dvPlace(bar, { from: x.from, to: x.to }, axis);
   // 短い予定は幅が1〜2マスしかなく、名前を入れると潰れる。狭いときは名前を外に出す
-  if (dvSpanWidth({ from: x.from, to: x.to }, axis, colW) < 88) bar.classList.add('is-narrow');
+  const cols = dvSpanCols({ from: x.from, to: x.to }, axis);
+  bar.dataset.cols = cols;
+  bar.classList.toggle('is-narrow', cols * colW < DV_NARROW.sub);
 
   const dot = document.createElement('span');
   dot.className = 'dv-sub-dot';
@@ -2784,13 +2881,30 @@ $('detailClose').addEventListener('click', closeDetail);
 $('dvPrev').addEventListener('click', () => dvShift(-1));
 $('dvNext').addEventListener('click', () => dvShift(1));
 $('dvToday').addEventListener('click', dvGoToday);
-$('dvFit').addEventListener('click', () => { dvColW = null; renderDetail(); });
+$('dvFit').addEventListener('click', () => {
+  const axis = dvAxis();
+  dvPendingLeft = dvLeftPos(axis, dvCurColW(axis));   // 見ている場所は変えない
+  dvColW = null;
+  renderDetail();
+});
+
+// 横に送るたびに、見出しと「今日」ボタンを合わせ直す
+$('detailScroll').addEventListener('scroll', () => {
+  if (!dvOpen) return;
+  if (dvScrollTick) return;
+  dvScrollTick = requestAnimationFrame(() => { dvScrollTick = null; dvSyncRangeLabel(); });
+});
+let dvScrollTick = null;
 
 document.querySelectorAll('#detailToggle button').forEach(btn => {
   btn.addEventListener('click', () => {
+    // 表示を切り替えても、いま見ている日付から動かない
+    const before = dvAxis();
+    const iso = dvPosToIso(before, dvLeftPos(before, dvCurColW(before)));
     dvMode = btn.dataset.dv;
     localStorage.setItem(DV_MODE_KEY, dvMode);
     dvColW = null;              // 表示を変えたら、まず幅に合わせた状態から始める
+    dvPendingLeft = dvIsoToPos(dvAxis(), iso);
     hidePopover();
     renderDetail();
   });
@@ -2825,9 +2939,29 @@ document.addEventListener('wheel', e => {
 
   dvColW = next;
   hidePopover();
-  renderDetail();
+  dvApplyColW(axis, next);
   el.scrollLeft = ratio * (next * axis.count) + DV_HEAD_W - pointer;
+  dvSyncRangeLabel();
 }, { passive: false, capture: true });
+
+// 拡大縮小はここだけで済ませる。列の幅は CSS 変数で持たせてあるので、
+// 変数を差し替えれば位置も幅も付いてくる。
+// **ホイールのたびに renderDetail() を呼ばないこと**（年度まるごとぶんの
+// マス目を作り直すことになり、拡大がガクガクになる）
+function dvApplyColW(axis, colW) {
+  const inner = $('detailInner');
+  inner.style.setProperty('--dv-col-w', colW + 'px');
+  inner.style.setProperty('--dv-track-w', (colW * axis.count) + 'px');
+
+  // px で決まるものだけ当て直す
+  $('detailAxis').querySelector('.dv-axis-cols')
+    .classList.toggle('is-tight', axis.unit === 'day' && colW < 30);
+  $('dvFit').hidden = dvColW === null;
+  for (const bar of $('detailBody').querySelectorAll('.bar[data-cols]')) {
+    const need = bar.classList.contains('dv-sub-bar') ? DV_NARROW.sub : DV_NARROW.task;
+    bar.classList.toggle('is-narrow', Number(bar.dataset.cols) * colW < need);
+  }
+}
 
 // 幅に合わせている最中は、ウインドウの大きさが変わったら追従する。
 // resize は連続して飛んでくるので、止まってから1回だけ描き直す

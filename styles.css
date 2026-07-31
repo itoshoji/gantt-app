@@ -88,6 +88,18 @@ body {
 .scope-toggle button[data-scope="work"].is-active { background: var(--accent); }
 .scope-toggle button[data-scope="private"].is-active { background: #3e9b6e; }
 
+/* チェックした項目に対する操作。表示トグルのすぐ右、固定の帯の中に置く
+   （表と一緒にスクロールして見失わないように） */
+.select-group { display: flex; align-items: center; gap: 8px; }
+.select-group[hidden] { display: none; }
+.select-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.select-group .btn { padding: 5px 13px; font-size: 13px; }
+
 .range-nav { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .range-nav[hidden] { display: none; }
 .range-label {
@@ -141,24 +153,6 @@ body {
 /* ---------- ボード ---------- */
 .board { padding: 16px 20px 120px; }
 .board[hidden] { display: none; }
-
-/* チェックした項目に対する操作の帯。
-   中身が出入りしても表が上下に動かないよう、高さは常に確保する */
-.select-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 40px;
-  padding: 0 2px;
-  margin-bottom: 4px;
-}
-.select-hint { font-size: 12.5px; color: #aab1bb; }
-.select-hint[hidden] { display: none; }
-.select-count { font-size: 13px; font-weight: 600; color: var(--accent); }
-.select-count[hidden] { display: none; }
-.select-bar .btn { padding: 6px 14px; font-size: 13px; }
-.select-detail[hidden],
-.select-clear[hidden] { display: none; }
 
 .row {
   display: grid;
@@ -1045,26 +1039,36 @@ body {
   width: max-content;
 }
 
+/* ⚠ 見出し列とバー置き場を grid で分けないこと。
+   grid のマス目は、その中に収まっている要素の「貼り付き（sticky）」の効く範囲も
+   マス目までに縛る。だから横に送ると見出し列がマス目ごと流れて見切れる。
+   flex なら貼り付きの効く範囲が行全体になるので、左端に残ってくれる。 */
 .detail-axis {
-  display: grid;
-  grid-template-columns: var(--dv-head-w) var(--dv-track-w, 1fr);
+  display: flex;
+  align-items: stretch;
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   z-index: 4;
   background: var(--panel);
+  width: max-content;
+  min-width: 100%;
 }
 .dv-axis-head {
+  width: var(--dv-head-w);
+  flex: none;
   padding: 6px 10px;
   font-size: 12px;
   color: var(--muted);
-  align-self: end;
+  display: flex;
+  align-items: flex-end;
   position: sticky;
   left: 0;
   z-index: 5;
   background: var(--panel);
+  border-right: 1px solid var(--border);
 }
-.dv-axis-cols { display: grid; }
+.dv-axis-cols { display: grid; width: var(--dv-track-w, 100%); flex: none; }
 
 .dv-col-head {
   padding: 6px 0;
@@ -1109,7 +1113,11 @@ body {
   align-items: center;
   gap: 8px;
   padding: 10px 10px 6px;
-  width: var(--dv-head-w);
+  width: max-content;
+  min-width: var(--dv-head-w);
+  position: sticky;
+  left: 0;
+  z-index: 3;
   background: var(--panel);
 }
 .dv-group-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
@@ -1126,14 +1134,18 @@ body {
 /* ---------- 中タスク1つぶんのブロック ---------- */
 /* 上に中タスクのバー、その真下に、期間だけを点線で囲った縄張り。
    その中に小タスクを置く */
+/* grid ではなく flex。理由は .detail-axis のコメント参照 */
 .dv-block {
-  display: grid;
-  grid-template-columns: var(--dv-head-w) var(--dv-track-w, 1fr);
+  display: flex;
   align-items: stretch;
   border-top: 1px solid var(--border);
+  width: max-content;
+  min-width: 100%;
 }
 
 .dv-block-head {
+  width: var(--dv-head-w);
+  flex: none;
   display: flex;
   align-items: flex-start;
   gap: 7px;
@@ -1175,6 +1187,8 @@ body {
 }
 
 .dv-block-body {
+  width: var(--dv-track-w, 100%);
+  flex: none;
   position: relative;
   padding: 6px 0 8px;
 }
@@ -1190,6 +1204,10 @@ body {
 .dv-gridline.is-sat { background: rgba(62, 124, 177, .05); }
 .dv-gridline.is-sun { background: rgba(192, 85, 79, .05); }
 .dv-gridline.is-today { background: rgba(62, 124, 177, .09); }
+/* 目盛りが一続きなので、月の変わり目に濃い区切りを入れる */
+.dv-gridline.is-month-start { border-left-color: #b9c1cb; }
+.dv-col-head.is-month-start { border-left-color: #b9c1cb; }
+.dv-col-head.is-month-start .dv-dnum { color: var(--accent); }
 
 .dv-task-lane {
   position: relative;
@@ -1237,15 +1255,15 @@ body {
   pointer-events: none;
 }
 
+/* 空きマスは中タスクの期間のぶんだけ置く（期間の外は小タスクを置く場所ではない） */
 .dv-sub-cells {
   position: absolute;
-  inset: 0 0 6px;
+  top: 0;
+  bottom: 6px;
   display: grid;
 }
 .dv-sub-cell { cursor: pointer; }
 .dv-sub-cell:hover { background: rgba(62, 124, 177, .07); }
-/* 中タスクの期間の外は、小タスクを置く場所ではないので反応させない */
-.dv-sub-cell.is-outside { cursor: default; pointer-events: none; }
 
 .dv-sub-bars { position: relative; pointer-events: none; }
 
