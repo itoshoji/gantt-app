@@ -25,6 +25,10 @@
 
 * { box-sizing: border-box; }
 
+/* 画面いっぱいのモーダルを開いている間は、背後のページを固定する。
+   ガント表は画面より横に長いので、裏がスクロールするとモーダルの位置がずれる */
+body.is-modal-open { overflow: hidden; }
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif;
@@ -991,11 +995,17 @@ body {
    カレンダーと同じく画面いっぱいに近い大きさで開く */
 .detail-dialog {
   width: min(1600px, 100%);
+  max-width: 100%;
   height: 100%;
   max-height: none;
   display: flex;
   flex-direction: column;
   padding: 16px 20px;
+  /* 拡大すると中身が画面より横に長くなる。min-width の既定（auto）のままだと
+     ダイアログ自身が中身に押し広げられて画面からはみ出すので、0 にして
+     .detail-scroll のスクロールに任せる */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .detail-head {
@@ -1022,9 +1032,13 @@ body {
    左の見出し列と上の目盛りは貼り付けて、いつでも「どのタスクの何日か」が読めるようにする */
 .detail-scroll {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
   position: relative;
-  overscroll-behavior-x: contain;
+  /* ここで行き止まったスクロールを背後のページへ流さない
+     （背後のガント表は横に長いので、流れると裏がずれる） */
+  overscroll-behavior: contain;
 }
 .detail-inner {
   min-width: 100%;

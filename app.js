@@ -2121,12 +2121,16 @@ function openDetail() {
   dvOpen = true;
   hidePopover();
   $('detailOverlay').hidden = false;
+  // 開いている間は背後のページを動かさない。
+  // ガント表は画面より横に長く、裏がスクロールするとモーダルの位置がずれる
+  document.body.classList.add('is-modal-open');
   renderDetail();
 }
 
 function closeDetail() {
   dvOpen = false;
   $('detailOverlay').hidden = true;
+  document.body.classList.remove('is-modal-open');
   hidePopover();
   render();
 }
@@ -2793,10 +2797,19 @@ document.querySelectorAll('#detailToggle button').forEach(btn => {
 });
 
 // Ctrl（Macは⌘でも）＋ホイールで拡大縮小。
-// マウスの下にある日付が動かないようにスクロール位置を合わせ直す
-$('detailScroll').addEventListener('wheel', e => {
-  if (!isCmd(e)) return;
-  e.preventDefault();
+// マウスの下にある日付が動かないようにスクロール位置を合わせ直す。
+//
+// ⚠ 受けるのは**画面全体（キャプチャ段階）**で、詳細ビューを開いている間は
+// どこで回しても必ず preventDefault する。
+//
+// 詳細ビューの中だけに付けると、ヘッダーの上や枠の外で回したぶんが素通りして
+// ブラウザのページ拡大が発動する。このアプリは背後のガント表が画面より横に長いので、
+// ページ拡大が起きると position:fixed のモーダルが右へずれて見切れる（実際に起きた）。
+// **この歯止めを外さないこと。**
+document.addEventListener('wheel', e => {
+  if (!dvOpen || !isCmd(e)) return;
+  e.preventDefault();                                  // ページ拡大を必ず止める
+  if (!$('detailOverlay').contains(e.target)) return;  // 枠の外なら止めるだけ
 
   const el = $('detailScroll');
   const axis = dvAxis();
@@ -2814,7 +2827,7 @@ $('detailScroll').addEventListener('wheel', e => {
   hidePopover();
   renderDetail();
   el.scrollLeft = ratio * (next * axis.count) + DV_HEAD_W - pointer;
-}, { passive: false });
+}, { passive: false, capture: true });
 
 // 幅に合わせている最中は、ウインドウの大きさが変わったら追従する。
 // resize は連続して飛んでくるので、止まってから1回だけ描き直す
