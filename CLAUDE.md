@@ -92,9 +92,10 @@ git status -sb        # ahead/behind が出ないこと
 
 1. `requirements.md` で仕様を確認する
 2. 実装する
-3. **ロジックは jsc でテストを書いて通す**（日付計算・段組み・祝日・色まわりは特にバグりやすい）
-4. **ブラウザで実際に操作して目視確認する**（ドラッグ操作はテストで担保できない）
-5. 仕様を変えたら `requirements.md` も更新する
+3. **`python3 test.py` を通す。** 落ちたまま版を出さない
+4. 直した所にテストが無ければ**書き足す**（日付計算・段組み・祝日・色まわりは特にバグりやすい）
+5. **ブラウザで実際に操作して目視確認する**（見た目とマウス操作はテストで担保できない）
+6. 仕様を変えたら `requirements.md` も更新する
 
 ### セッションの起動
 
@@ -127,16 +128,26 @@ gantt-pick   # 過去のセッション一覧から選ぶ
 | `app.js` | 画面の描画と操作 |
 | `build_standalone.py` | 1ファイル版を作る |
 | `release.py` | コミット→ビルド→ドライブ配置をまとめて行う |
+| `test.py` | テストをまとめて走らせる |
+| `tests/` | テスト本体。`app.js` から実物のコードを切り出して動かす |
 
 ### 開発環境の制約
 
 このMacには **Node.js も Homebrew も入っていない**。勝手に入れない。代わりに:
 
-- **ロジックのテスト**: macOS標準の JavaScriptCore
+- **ロジックのテスト**: macOS標準の JavaScriptCore。まとめて走らせるには
   ```
-  /System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc テスト.js
+  python3 test.py
   ```
-  `const` はevalのスコープ外に漏れないので、テスト対象とテスト本体は1つのファイルにまとめる
+  テストを書くときの決まりごと:
+  - **`app.js` から実物の関数を切り出して（`grabFn`）動かすこと。**
+    テスト側にコードを写して置くと、直したときにテストだけ古いまま残る
+  - **ファイル名は英数字にする。** jsc は日本語のファイル名を開けない
+  - `const` はevalのスコープ外に漏れないので、`grabConst` で `var` に読み替えて渡す
+  - DOMが要るものは偽物を渡す（`tests/drag.js` が例。偽のバーを渡して
+    実物の `startTaskDrag` をそのまま動かしている）
+  - **書いたら一度わざと壊して、ちゃんと落ちることを確かめる。**
+    通ったまま何も守っていないテストが一番たちが悪い
 - **ブラウザでの確認**: Chrome拡張は `file://` を開けないので、ローカル配信してから見る
   ```
   python3 -m http.server 8765 --bind 127.0.0.1 --directory /Users/shoji/projects/gantt-app
