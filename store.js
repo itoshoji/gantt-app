@@ -259,7 +259,6 @@ const Store = (() => {
 
     // --- 参照 ---
     groups: () => state.groups,
-    groupsIn: scope => state.groups.filter(g => g.scope === scope),
     tasksOf: (groupId, fy) =>
       state.tasks.filter(t => t.groupId === groupId && t.fy === fy),
     task: id => state.tasks.find(t => t.id === id),
@@ -269,15 +268,13 @@ const Store = (() => {
     allSubtasks: () => state.subtasks,
 
     // --- 項目 ---
-    addGroup({ name, tag, color, scope = 'work' }) {
-      const g = { id: uid(), name, tag, color, scope, hidden: false };
+    // scope は仕事／プライベートの切り替えに使っていた名残。機能は廃止したが、
+    // DBのカラムはそのまま残してあるので 'work' を入れ続ける
+    addGroup({ name, tag, color }) {
+      const g = { id: uid(), name, tag, color, scope: 'work', hidden: false };
       state.groups.push(g);
       insert('groups', groupRow(g, state.groups.length - 1));
       return g;
-    },
-    setGroupScope(id, scope) {
-      const g = state.groups.find(x => x.id === id);
-      if (g) { g.scope = scope; patch('groups', id, { scope }); }
     },
     renameGroup(id, name) {
       const g = state.groups.find(x => x.id === id);

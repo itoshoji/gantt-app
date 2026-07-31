@@ -53,16 +53,14 @@ body {
 
 .app-title { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: .04em; }
 
-.view-toggle,
-.scope-toggle {
+.view-toggle {
   display: flex;
   background: #eef1f5;
   border-radius: 8px;
   padding: 2px;
   gap: 2px;
 }
-.view-toggle button,
-.scope-toggle button {
+.view-toggle button {
   border: none;
   background: transparent;
   padding: 5px 14px;
@@ -78,15 +76,6 @@ body {
   font-weight: 600;
   box-shadow: 0 1px 2px rgba(15, 23, 42, .12);
 }
-
-/* 仕事／プライベートは今どちらを見ているかが一目で分かるよう色で区別する */
-.scope-toggle button.is-active {
-  font-weight: 600;
-  color: #fff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, .12);
-}
-.scope-toggle button[data-scope="work"].is-active { background: var(--accent); }
-.scope-toggle button[data-scope="private"].is-active { background: #3e9b6e; }
 
 /* チェックした項目に対する操作。表示トグルのすぐ右、固定の帯の中に置く
    （表と一緒にスクロールして見失わないように） */

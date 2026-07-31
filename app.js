@@ -10,7 +10,6 @@ const LANE_GAP = 6;     // 同上 --lane-gap
 const CAL_BAR_H = 44;
 const CAL_BAR_GAP = 4;
 const VIEW_KEY = 'gantt-app:view';
-const SCOPE_KEY = 'gantt-app:scope';
 
 // 項目の色は赤・青の2択だけ（種類の区別が一目で付けばよい、という方針）。
 // 細かい色分けは中タスク側で自由に付ける。
@@ -179,9 +178,6 @@ function dvSubStyle(baseHex) {
 
 // ---------- 画面状態 ----------
 let viewMode = localStorage.getItem(VIEW_KEY) || 'year';   // 'year' | 'quarter' | 'day'
-let scopeMode = localStorage.getItem(SCOPE_KEY) === 'private' ? 'private' : 'work';
-const SCOPE_LABEL = { work: '仕事', private: 'プライベート' };
-const inScope = g => !!g && g.scope === scopeMode;
 let fy = currentFiscalYear();
 let quarter = Math.floor((ymToIdx(fy, today.getFullYear(), today.getMonth() + 1) || 0) / 3);
 let popoverTaskId = null;
@@ -434,7 +430,7 @@ function renderSelectBar() {
   // 消えた項目や、いま見ていない側（仕事／プライベート）の項目は対象から外す
   for (const id of [...checkedGroupIds]) {
     const g = Store.group(id);
-    if (!g || !inScope(g)) checkedGroupIds.delete(id);
+    if (!g) checkedGroupIds.delete(id);
   }
   const n = checkedGroupIds.size;
   $('selectGroup').hidden = n === 0;
@@ -453,9 +449,6 @@ function clearCheckedGroups() {
 function applyViewMode() {
   document.querySelectorAll('#viewToggle button').forEach(b => {
     b.classList.toggle('is-active', b.dataset.view === viewMode);
-  });
-  document.querySelectorAll('#scopeToggle button').forEach(b => {
-    b.classList.toggle('is-active', b.dataset.scope === scopeMode);
   });
   $('boardView').hidden = viewMode === 'day';
   $('todoView').hidden = viewMode !== 'day';
@@ -482,10 +475,10 @@ function renderMonthHeader() {
 }
 
 function renderGroups() {
-  const groups = Store.groupsIn(scopeMode);
+  const groups = Store.groups();
   $('emptyHint').hidden = groups.length > 0;
   $('emptyHint').textContent =
-    `下の「＋ 項目を追加」から${SCOPE_LABEL[scopeMode]}の項目を追加してください。`;
+    '下の「＋ 項目を追加」から項目（定例業務・プロジェクト）を追加してください。';
   groupListEl.innerHTML = '';
   const vis = visibleRange();
   const count = vis.to - vis.from + 1;
@@ -620,15 +613,6 @@ function buildGroupHead(g, row) {
         label: g.hidden ? 'カレンダーに表示する' : 'カレンダーから隠す',
         onClick: () => {
           History.act('表示の切り替え', () => Store.setGroupHidden(g.id, !g.hidden));
-          render();
-        },
-      },
-      {
-        label: `${SCOPE_LABEL[g.scope === 'work' ? 'private' : 'work']}へ移動`,
-        onClick: () => {
-          History.act('移動', () =>
-            Store.setGroupScope(g.id, g.scope === 'work' ? 'private' : 'work'));
-          hidePopover();
           render();
         },
       },
@@ -1048,7 +1032,7 @@ function upcomingItems() {
       const t = Store.task(s.taskId);
       return { s, t, g: t ? Store.group(t.groupId) : null };
     })
-    .filter(x => inScope(x.g) && !x.g.hidden && dateNum(x.s.endDate || x.s.startDate) >= dateNum(TODAY))
+    .filter(x => x.g && !x.g.hidden && dateNum(x.s.endDate || x.s.startDate) >= dateNum(TODAY))
     .sort((a, b) =>
       dateNum(a.s.startDate) - dateNum(b.s.startDate) ||
       (a.s.name || '').localeCompare(b.s.name || ''));
@@ -1606,7 +1590,7 @@ function calendarItems() {
       return { s, t, g, from: p.from, to: p.to, focused: !!focused };
     })
     .filter(x =>
-      inScope(x.g) && !x.g.hidden &&
+      x.g && !x.g.hidden &&
       dateNum(x.to) >= from && dateNum(x.from) <= to);
 }
 
@@ -2156,7 +2140,7 @@ function dvTasksOf(groupId, axis) {
 
 // ---------- 開閉と期間の移動 ----------
 function openDetail() {
-  const targets = Store.groupsIn(scopeMode).filter(g => checkedGroupIds.has(g.id));
+  const targets = Store.groups().filter(g => checkedGroupIds.has(g.id));
   if (!targets.length) return;
   dvGroupIds = targets.map(g => g.id);
   dvFy = fy;
@@ -2993,8 +2977,7 @@ function renderSwatches() {
 }
 
 function openGroupDialog() {
-  $('groupDialog').querySelector('.dialog-title').textContent =
-    `${SCOPE_LABEL[scopeMode]}の項目を追加`;
+  $('groupDialog').querySelector('.dialog-title').textContent = '項目を追加';
   dlgTag = 'routine';
   dlgColor = DEFAULT_GROUP_COLOR.routine;
   $('groupName').value = '';
@@ -3017,7 +3000,7 @@ function saveGroup() {
   const name = $('groupName').value.trim();
   if (!name) { $('groupName').focus(); return; }
   History.act('項目の追加', () =>
-    Store.addGroup({ name, tag: dlgTag, color: dlgColor, scope: scopeMode }));
+    Store.addGroup({ name, tag: dlgTag, color: dlgColor }));
   $('groupDialog').hidden = true;
   render();
 }
@@ -3035,15 +3018,6 @@ document.querySelectorAll('#viewToggle button').forEach(btn => {
   btn.addEventListener('click', () => {
     viewMode = btn.dataset.view;
     localStorage.setItem(VIEW_KEY, viewMode);
-    hidePopover();
-    render();
-  });
-});
-
-document.querySelectorAll('#scopeToggle button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    scopeMode = btn.dataset.scope;
-    localStorage.setItem(SCOPE_KEY, scopeMode);
     hidePopover();
     render();
   });
