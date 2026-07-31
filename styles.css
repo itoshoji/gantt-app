@@ -8,6 +8,7 @@
   --cal-date-h: 30px;   /* 日付の数字が占める高さ。バーはこの下から始まる */
   /* 詳細ビューの寸法。app.js の DV_SUB_H / DV_SUB_GAP と合わせること */
   --dv-head-w: 210px;
+  --dv-task-h: 30px;
   --dv-sub-h: 26px;
   --dv-sub-gap: 4px;
   --border: #e2e6ec;
@@ -1017,18 +1018,37 @@ body {
   color: #aab1bb;
 }
 
-/* 横軸の目盛り。上に固定して、下の中身だけを縦にスクロールさせる */
+/* 拡大すると横に長くなるので、目盛りと中身をひとつの器でまとめてスクロールさせる。
+   左の見出し列と上の目盛りは貼り付けて、いつでも「どのタスクの何日か」が読めるようにする */
+.detail-scroll {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+  overscroll-behavior-x: contain;
+}
+.detail-inner {
+  min-width: 100%;
+  width: max-content;
+}
+
 .detail-axis {
   display: grid;
-  grid-template-columns: var(--dv-head-w) 1fr;
+  grid-template-columns: var(--dv-head-w) var(--dv-track-w, 1fr);
   border-bottom: 1px solid var(--border);
-  flex: none;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--panel);
 }
 .dv-axis-head {
   padding: 6px 10px;
   font-size: 12px;
   color: var(--muted);
   align-self: end;
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background: var(--panel);
 }
 .dv-axis-cols { display: grid; }
 
@@ -1055,6 +1075,9 @@ body {
 }
 .dv-dow { font-size: 10.5px; }
 .dv-dnum { font-size: 13px; font-weight: 600; color: var(--text); }
+/* 列が細いときは曜日を省く（潰れた字を出さない） */
+.dv-axis-cols.is-tight .dv-dow { display: none; }
+.dv-axis-cols.is-tight .dv-dnum { font-size: 12px; }
 .dv-col-head.is-sat { background: var(--sat-bg); }
 .dv-col-head.is-sat .dv-dow,
 .dv-col-head.is-sat .dv-dnum { color: var(--sat); }
@@ -1063,12 +1086,7 @@ body {
 .dv-col-head.is-sun .dv-dnum { color: var(--sun); }
 .dv-col-head.is-today { box-shadow: inset 0 -2px 0 var(--accent); }
 
-.detail-body {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding-bottom: 40px;
-}
+.detail-body { padding-bottom: 40px; }
 
 /* ---------- 項目の見出し ---------- */
 .dv-group + .dv-group { margin-top: 18px; }
@@ -1077,10 +1095,8 @@ body {
   align-items: center;
   gap: 8px;
   padding: 10px 10px 6px;
-  position: sticky;
-  top: 0;
+  width: var(--dv-head-w);
   background: var(--panel);
-  z-index: 2;
 }
 .dv-group-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 .dv-group-name { font-weight: 700; font-size: 14px; }
@@ -1098,7 +1114,7 @@ body {
    その中に小タスクを置く */
 .dv-block {
   display: grid;
-  grid-template-columns: var(--dv-head-w) 1fr;
+  grid-template-columns: var(--dv-head-w) var(--dv-track-w, 1fr);
   align-items: stretch;
   border-top: 1px solid var(--border);
 }
@@ -1109,6 +1125,11 @@ body {
   gap: 7px;
   padding: 12px 10px 10px;
   min-width: 0;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
 }
 .dv-block-dot { width: 9px; height: 9px; border-radius: 3px; margin-top: 5px; flex: none; }
 .dv-task-name {
@@ -1158,19 +1179,33 @@ body {
 
 .dv-task-lane {
   position: relative;
-  height: var(--lane-h);
+  height: var(--dv-task-h);
 }
 
-/* 中タスクのバー。日の目盛りの上では動かせないので、掴む見た目にしない */
-.dv-task-bar { top: 0; }
+/* 中タスクは期間を示す「屋根」。小タスクと見分けが付くよう、
+   角を落として上辺に色の帯を渡し、下地も濃いめ・文字も太くする */
+.dv-task-bar {
+  top: 0;
+  height: var(--dv-task-h);
+  border-radius: 4px;
+  border-left: none;
+  border-top: 3px solid var(--accent-color, transparent);
+  font-weight: 600;
+  padding: 0 10px;
+}
+.dv-task-bar.clip-left { border-top-left-radius: 0; border-bottom-left-radius: 0; padding-left: 10px; }
+/* 日の目盛りの上では動かせないので、掴む見た目にしない */
 .dv-task-bar.is-fixed { cursor: default; }
 .dv-task-bar.is-fixed:active { cursor: default; }
+
 .dv-bar-range {
   font-size: 11.5px;
-  opacity: .65;
+  font-weight: 400;
+  opacity: .7;
   pointer-events: none;
   flex: none;
 }
+.dv-task-bar.is-narrow .dv-bar-range { display: none; }
 
 /* ---------- 小タスクの置き場 ---------- */
 .dv-sub-area { position: relative; margin-top: 4px; }
@@ -1200,12 +1235,42 @@ body {
 
 .dv-sub-bars { position: relative; pointer-events: none; }
 
+/* 小タスクは実際の作業。中タスクの「屋根」と別物に見えるよう、
+   丸いピルにして、ほぼ白の下地＋細い輪郭＋左に色の点で描く */
 .dv-sub-bar {
   height: var(--dv-sub-h);
   font-size: 13px;
-  padding: 0 8px 0 10px;
-  border-radius: 6px;
+  padding: 0 10px 0 8px;
+  gap: 6px;
+  border-radius: 999px;
+  border-left: none;
+  box-shadow: inset 0 0 0 1px var(--line-color, var(--border)), 0 1px 1px rgba(15, 23, 42, .05);
 }
+.dv-sub-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-color, var(--muted));
+  flex: none;
+  pointer-events: none;
+}
+
+/* 1日だけの予定などはバーが細く、名前を入れると潰れる。名前は右の外に出す */
+.bar.is-narrow { overflow: visible; }
+.bar.is-narrow .label {
+  position: absolute;
+  left: calc(100% + 7px);
+  top: 50%;
+  transform: translateY(-50%);
+  flex: none;
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+.dv-sub-bar.is-narrow { padding: 0; justify-content: center; }
+
 .dv-sub-bar input {
   width: 100%;
   border: none;

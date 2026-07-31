@@ -134,13 +134,19 @@
         <button class="icon-btn" id="dvNext" title="次へ">›</button>
       </div>
       <button class="today-btn" id="dvToday" title="今日を含む期間へ">今日</button>
+      <button class="today-btn" id="dvFit" title="横幅いっぱいに戻す" hidden>幅に合わせる</button>
 
       <span class="detail-note" id="detailNote"></span>
       <button class="icon-btn" id="detailClose" title="閉じる">×</button>
     </div>
 
-    <div class="detail-axis" id="detailAxis"></div>
-    <div class="detail-body" id="detailBody"></div>
+    <!-- 拡大すると横に長くなるので、目盛りと中身をまとめて横スクロールさせる -->
+    <div class="detail-scroll" id="detailScroll">
+      <div class="detail-inner" id="detailInner">
+        <div class="detail-axis" id="detailAxis"></div>
+        <div class="detail-body" id="detailBody"></div>
+      </div>
+    </div>
   </div>
 </div>
 

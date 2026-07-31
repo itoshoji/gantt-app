@@ -153,6 +153,30 @@ function barStyle(baseHex, subCount) {
   };
 }
 
+// 詳細ビューは中タスクと小タスクが上下に並ぶ。同じ「淡い下地＋色帯」で描くと
+// 見分けが付かないので、ここだけ役割で形を変える。
+//   中タスク … 期間を示す「屋根」。角ばらせて、濃いめの下地＋上辺に色の帯＋太字
+//   小タスク … 実際の作業。丸いピルにして、ほぼ白＋細い輪郭＋左に色の点
+// 色の面積を増やさない方針はそのまま（濃さではなく形で分ける）
+function dvTaskStyle(baseHex) {
+  const { h, s } = hexToHsl(baseHex);
+  return {
+    bg: `hsl(${h.toFixed(0)} ${Math.min(s, 60).toFixed(0)}% 91%)`,
+    fg: `hsl(${h.toFixed(0)} ${Math.min(s, 52).toFixed(0)}% 24%)`,
+    accent: baseHex,
+  };
+}
+
+function dvSubStyle(baseHex) {
+  const { h, s } = hexToHsl(baseHex);
+  return {
+    bg: `hsl(${h.toFixed(0)} ${Math.min(s, 55).toFixed(0)}% 98%)`,
+    fg: `hsl(${h.toFixed(0)} ${Math.min(s, 52).toFixed(0)}% 30%)`,
+    line: `hsl(${h.toFixed(0)} ${Math.min(s, 45).toFixed(0)}% 79%)`,
+    accent: baseHex,
+  };
+}
+
 // ---------- 画面状態 ----------
 let viewMode = localStorage.getItem(VIEW_KEY) || 'year';   // 'year' | 'quarter' | 'day'
 let scopeMode = localStorage.getItem(SCOPE_KEY) === 'private' ? 'private' : 'work';
@@ -1986,6 +2010,12 @@ $('calendarOverlay').addEventListener('pointerdown', e => {
 const DV_MODE_KEY = 'gantt-app:detail-mode';
 const DV_SUB_H = 26;      // 小タスクのバーの高さ（styles.css の --dv-sub-h と合わせる）
 const DV_SUB_GAP = 4;     // 同上 --dv-sub-gap
+const DV_HEAD_W = 210;    // 左の見出し列の幅（同上 --dv-head-w）
+
+// 1列の幅（px）。既定は「画面の幅に合わせる」だが、それだと月表示で
+// 1日ぶんが細くなりすぎて小タスクが読めない。Ctrl+ホイールで広げられるようにする
+const DV_COL_MIN = { day: 22, month: 56 };
+const DV_COL_MAX = { day: 220, month: 640 };
 
 let dvOpen = false;
 let dvGroupIds = [];
@@ -1995,6 +2025,19 @@ let dvQuarter = quarter;
 let dvY = today.getFullYear();
 let dvM = today.getMonth() + 1;
 let dvWeekStart = startOfWeek(TODAY);
+let dvColW = null;        // null なら画面の幅に合わせる。数字が入っていれば拡大中
+
+// 画面の幅にちょうど収まる1列の幅。ただし細くなりすぎる手前で止める
+function dvFitColW(axis) {
+  const el = $('detailScroll');
+  const avail = (el ? el.clientWidth : 1200) - DV_HEAD_W;
+  return Math.max(avail / axis.count, DV_COL_MIN[axis.unit]);
+}
+
+// いま使う1列の幅
+function dvCurColW(axis) {
+  return dvColW || dvFitColW(axis);
+}
 
 function startOfWeek(iso) { return addDays(iso, -dowOf(iso)); }
 const fyOf = (y, m) => (m >= 4 ? y : y - 1);
@@ -2039,6 +2082,13 @@ function dvPlace(el, span, axis) {
   el.classList.toggle('clip-right', clipR);
 }
 
+// 画面に出る幅（px）。名前がバーに収まるかの判定に使う
+function dvSpanWidth(span, axis, colW) {
+  const from = Math.max(span.from, axis.from);
+  const to = Math.min(span.to, axis.to);
+  return Math.max(to - from + 1, 0) * colW;
+}
+
 // 表示範囲にかかる中タスクを集める。
 // 週や月の表示は年度をまたぐことがあるので、かかる年度を両方見る
 function dvTasksOf(groupId, axis) {
@@ -2067,6 +2117,7 @@ function openDetail() {
   dvGroupIds = targets.map(g => g.id);
   dvFy = fy;
   dvQuarter = quarter;
+  dvColW = null;
   dvOpen = true;
   hidePopover();
   $('detailOverlay').hidden = false;
@@ -2138,11 +2189,19 @@ function renderDetail() {
   });
   $('dvRangeLabel').textContent = dvRangeLabel();
   $('dvToday').classList.toggle('is-current', dvShowingToday());
-  $('detailNote').textContent = axis.unit === 'month'
+  $('dvFit').hidden = dvColW === null;
+  $('detailNote').textContent = (axis.unit === 'month'
     ? '小タスクは「月」「週」で出ます'
-    : '中タスクの期間は「年」「四半期」で変えられます';
+    : '中タスクの期間は「年」「四半期」で変えられます')
+    + '　・　Ctrl+ホイールで拡大';
 
-  renderDetailAxis(axis);
+  // 列の幅をここで決めて、目盛りも中身も同じ幅を見るようにする
+  const colW = dvCurColW(axis);
+  const inner = $('detailInner');
+  inner.style.setProperty('--dv-col-w', colW + 'px');
+  inner.style.setProperty('--dv-track-w', (colW * axis.count) + 'px');
+
+  renderDetailAxis(axis, colW);
 
   const body = $('detailBody');
   body.innerHTML = '';
@@ -2171,7 +2230,7 @@ function renderDetail() {
       p.textContent = 'この期間に中タスクはありません。';
       sec.appendChild(p);
     }
-    for (const x of list) sec.appendChild(dvBuildBlock(x.t, g, x.sp, axis));
+    for (const x of list) sec.appendChild(dvBuildBlock(x.t, g, x.sp, axis, colW));
     body.appendChild(sec);
   }
 
@@ -2179,7 +2238,7 @@ function renderDetail() {
   paintClipboard();
 }
 
-function renderDetailAxis(axis) {
+function renderDetailAxis(axis, colW) {
   const el = $('detailAxis');
   el.innerHTML = '';
 
@@ -2190,7 +2249,9 @@ function renderDetailAxis(axis) {
 
   const cols = document.createElement('div');
   cols.className = 'dv-axis-cols';
-  cols.style.gridTemplateColumns = `repeat(${axis.count}, 1fr)`;
+  cols.style.gridTemplateColumns = `repeat(${axis.count}, ${colW}px)`;
+  // 列が細いときは曜日を省いて日付だけにする（潰れた字を出さない）
+  cols.classList.toggle('is-tight', axis.unit === 'day' && colW < 30);
 
   if (axis.unit === 'month') {
     const curIdx = ymToIdx(dvFy, today.getFullYear(), today.getMonth() + 1);
@@ -2226,7 +2287,7 @@ function renderDetailAxis(axis) {
 }
 
 // 中タスク1つぶんのブロック（上＝中タスクのバー、下＝その縄張りと小タスク）
-function dvBuildBlock(t, g, sp, axis) {
+function dvBuildBlock(t, g, sp, axis, colW) {
   const block = document.createElement('div');
   block.className = 'dv-block';
   block.dataset.taskId = t.id;
@@ -2259,7 +2320,7 @@ function dvBuildBlock(t, g, sp, axis) {
 
   const grid = document.createElement('div');
   grid.className = 'dv-grid';
-  grid.style.gridTemplateColumns = `repeat(${axis.count}, 1fr)`;
+  grid.style.gridTemplateColumns = `repeat(${axis.count}, ${colW}px)`;
   const curIdx = ymToIdx(dvFy, today.getFullYear(), today.getMonth() + 1);
   for (let i = 0; i < axis.count; i++) {
     const c = document.createElement('div');
@@ -2278,19 +2339,18 @@ function dvBuildBlock(t, g, sp, axis) {
 
   const lane = document.createElement('div');
   lane.className = 'dv-task-lane';
-  lane.appendChild(dvBuildTaskBar(t, g, sp, axis));
+  lane.appendChild(dvBuildTaskBar(t, g, sp, axis, colW));
   bodyEl.appendChild(lane);
 
   // 小タスクは日の目盛りがあるとき（月・週）だけ出す
-  if (axis.unit === 'day') bodyEl.appendChild(dvBuildSubArea(t, g, sp, axis));
+  if (axis.unit === 'day') bodyEl.appendChild(dvBuildSubArea(t, g, sp, axis, colW));
 
   block.appendChild(bodyEl);
   return block;
 }
 
-function dvBuildTaskBar(t, g, sp, axis) {
-  const subCount = Store.subtasksOf(t.id).length;
-  const { bg, fg, accent } = barStyle(taskColor(t, g), subCount);
+function dvBuildTaskBar(t, g, sp, axis, colW) {
+  const { bg, fg, accent } = dvTaskStyle(taskColor(t, g));
 
   const bar = document.createElement('div');
   bar.className = 'bar dv-task-bar';
@@ -2299,6 +2359,8 @@ function dvBuildTaskBar(t, g, sp, axis) {
   bar.style.color = fg;
   bar.style.setProperty('--accent-color', accent);
   dvPlace(bar, sp, axis);
+  // 幅が足りないと名前が「四…」のように潰れる。狭いときは名前をバーの外に出す
+  if (dvSpanWidth(sp, axis, colW) < 84) bar.classList.add('is-narrow');
 
   const label = document.createElement('span');
   label.className = 'label';
@@ -2384,7 +2446,7 @@ function dvBuildTaskBar(t, g, sp, axis) {
 }
 
 // 中タスクの真下。期間だけを点線で囲って、その中に小タスクを置く
-function dvBuildSubArea(t, g, sp, axis) {
+function dvBuildSubArea(t, g, sp, axis, colW) {
   const area = document.createElement('div');
   area.className = 'dv-sub-area';
 
@@ -2395,7 +2457,7 @@ function dvBuildSubArea(t, g, sp, axis) {
 
   const cells = document.createElement('div');
   cells.className = 'dv-sub-cells';
-  cells.style.gridTemplateColumns = `repeat(${axis.count}, 1fr)`;
+  cells.style.gridTemplateColumns = `repeat(${axis.count}, ${colW}px)`;
   for (let i = 0; i < axis.count; i++) {
     const iso = addDays(axis.start, i);
     const inside = ord(iso) >= sp.from && ord(iso) <= sp.to;
@@ -2428,15 +2490,15 @@ function dvBuildSubArea(t, g, sp, axis) {
   bars.className = 'dv-sub-bars';
   const h = laneCount * DV_SUB_H + (laneCount - 1) * DV_SUB_GAP;
   bars.style.height = h + 'px';
-  for (const x of sorted) bars.appendChild(dvBuildSubBar(x.s, t, g, x, axis));
+  for (const x of sorted) bars.appendChild(dvBuildSubBar(x.s, t, g, x, axis, colW));
   area.appendChild(bars);
   area.style.height = (h + 14) + 'px';
 
   return area;
 }
 
-function dvBuildSubBar(s, t, g, x, axis) {
-  const { bg, fg, accent } = calBarStyle(taskColor(t, g));
+function dvBuildSubBar(s, t, g, x, axis, colW) {
+  const { bg, fg, line, accent } = dvSubStyle(taskColor(t, g));
 
   const bar = document.createElement('div');
   bar.className = 'bar dv-sub-bar';
@@ -2444,8 +2506,15 @@ function dvBuildSubBar(s, t, g, x, axis) {
   bar.style.background = bg;
   bar.style.color = fg;
   bar.style.setProperty('--accent-color', accent);
+  bar.style.setProperty('--line-color', line);
   bar.style.top = x.lane * (DV_SUB_H + DV_SUB_GAP) + 'px';
   dvPlace(bar, { from: x.from, to: x.to }, axis);
+  // 短い予定は幅が1〜2マスしかなく、名前を入れると潰れる。狭いときは名前を外に出す
+  if (dvSpanWidth({ from: x.from, to: x.to }, axis, colW) < 88) bar.classList.add('is-narrow');
+
+  const dot = document.createElement('span');
+  dot.className = 'dv-sub-dot';
+  bar.appendChild(dot);
 
   const label = document.createElement('span');
   label.className = 'label';
@@ -2711,14 +2780,50 @@ $('detailClose').addEventListener('click', closeDetail);
 $('dvPrev').addEventListener('click', () => dvShift(-1));
 $('dvNext').addEventListener('click', () => dvShift(1));
 $('dvToday').addEventListener('click', dvGoToday);
+$('dvFit').addEventListener('click', () => { dvColW = null; renderDetail(); });
 
 document.querySelectorAll('#detailToggle button').forEach(btn => {
   btn.addEventListener('click', () => {
     dvMode = btn.dataset.dv;
     localStorage.setItem(DV_MODE_KEY, dvMode);
+    dvColW = null;              // 表示を変えたら、まず幅に合わせた状態から始める
     hidePopover();
     renderDetail();
   });
+});
+
+// Ctrl（Macは⌘でも）＋ホイールで拡大縮小。
+// マウスの下にある日付が動かないようにスクロール位置を合わせ直す
+$('detailScroll').addEventListener('wheel', e => {
+  if (!isCmd(e)) return;
+  e.preventDefault();
+
+  const el = $('detailScroll');
+  const axis = dvAxis();
+  const cur = dvCurColW(axis);
+  const next = Math.min(
+    Math.max(cur * Math.exp(-e.deltaY * 0.0025), DV_COL_MIN[axis.unit]),
+    DV_COL_MAX[axis.unit]);
+  if (Math.abs(next - cur) < 0.01) return;
+
+  // マウスが指しているのは、目盛りの左端から何割の位置か
+  const pointer = e.clientX - el.getBoundingClientRect().left;
+  const ratio = (pointer + el.scrollLeft - DV_HEAD_W) / (cur * axis.count);
+
+  dvColW = next;
+  hidePopover();
+  renderDetail();
+  el.scrollLeft = ratio * (next * axis.count) + DV_HEAD_W - pointer;
+}, { passive: false });
+
+// 幅に合わせている最中は、ウインドウの大きさが変わったら追従する。
+// resize は連続して飛んでくるので、止まってから1回だけ描き直す
+// （毎回描き直すと、埋め込みで表示されたときなどに画面が固まる）
+let dvResizeTimer = null;
+window.addEventListener('resize', () => {
+  if (!dvOpen || dvColW !== null) return;
+  clearTimeout(dvResizeTimer);
+  dvResizeTimer = setTimeout(() => { if (dvOpen && dvColW === null) renderDetail(); }, 150);
 });
 
 // ==========================================================
