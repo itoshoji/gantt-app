@@ -6,6 +6,10 @@
   --cal-bar-h: 44px;
   --cal-bar-gap: 4px;
   --cal-date-h: 30px;   /* 日付の数字が占める高さ。バーはこの下から始まる */
+  /* 詳細ビューの寸法。app.js の DV_SUB_H / DV_SUB_GAP と合わせること */
+  --dv-head-w: 210px;
+  --dv-sub-h: 26px;
+  --dv-sub-gap: 4px;
   --border: #e2e6ec;
   --text: #1f2937;
   --muted: #8a93a0;
@@ -133,6 +137,24 @@ body {
 .board { padding: 16px 20px 120px; }
 .board[hidden] { display: none; }
 
+/* チェックした項目に対する操作の帯。
+   中身が出入りしても表が上下に動かないよう、高さは常に確保する */
+.select-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 2px;
+  margin-bottom: 4px;
+}
+.select-hint { font-size: 12.5px; color: #aab1bb; }
+.select-hint[hidden] { display: none; }
+.select-count { font-size: 13px; font-weight: 600; color: var(--accent); }
+.select-count[hidden] { display: none; }
+.select-bar .btn { padding: 6px 14px; font-size: 13px; }
+.select-detail[hidden],
+.select-clear[hidden] { display: none; }
+
 .row {
   display: grid;
   grid-template-columns: var(--head-w) 1fr;
@@ -182,6 +204,24 @@ body {
   gap: 6px;
   min-width: 0;
 }
+
+/* 一番左のチェック欄。普段は隠しておき、行にマウスを乗せたときと、
+   チェック済みのときだけ見せる（左端が混んで名前が痩せるのを避ける） */
+.group-check {
+  width: 15px;
+  height: 15px;
+  margin: 4px 0 0;
+  flex: none;
+  cursor: pointer;
+  accent-color: var(--accent);
+  opacity: 0;
+  transition: opacity .12s;
+}
+.group-row:hover .group-check,
+.group-check:focus-visible,
+.group-head.is-checked .group-check { opacity: 1; }
+/* 選んだ項目は行ごと分かるようにする */
+.group-head.is-checked { background: #eaf2f9; border-radius: 8px; }
 
 .group-grip {
   width: 16px;
@@ -854,19 +894,6 @@ body {
 }
 .sub-del:hover { background: #fbeceb; color: var(--sun); }
 
-/* ---------- 項目行のカレンダーアイコン ---------- */
-.group-cal {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  padding: 2px;
-  border-radius: 5px;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-}
-.group-cal:hover { background: #eef1f5; color: var(--text); }
-
 /* ---------- カレンダーの前後の月のマス ---------- */
 .cal-day.other-month { background: #fafbfc; }
 .cal-day.other-month .cal-date { color: #aab1bb; font-size: 12px; font-weight: 500; }
@@ -957,3 +984,235 @@ body {
   cursor: pointer;
 }
 .color-reset:hover { background: #eef1f5; color: var(--text); }
+
+/* ---------- 詳細ビュー ---------- */
+/* 少数の項目だけを取り出して中身を組み立てる場。
+   カレンダーと同じく画面いっぱいに近い大きさで開く */
+.detail-dialog {
+  width: min(1600px, 100%);
+  height: 100%;
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 20px;
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex: none;
+}
+.detail-title {
+  margin: 0;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detail-note {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: #aab1bb;
+}
+
+/* 横軸の目盛り。上に固定して、下の中身だけを縦にスクロールさせる */
+.detail-axis {
+  display: grid;
+  grid-template-columns: var(--dv-head-w) 1fr;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.dv-axis-head {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  align-self: end;
+}
+.dv-axis-cols { display: grid; }
+
+.dv-col-head {
+  padding: 6px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  border-left: 1px solid var(--border);
+  user-select: none;
+}
+.dv-col-head:not(.is-day) { cursor: pointer; }
+.dv-col-head:not(.is-day):hover { background: #eef3f8; color: var(--accent); }
+.dv-col-head.is-current { color: var(--accent); font-weight: 700; background: #eaf2f9; }
+
+/* 日の目盛りは曜日と日付の2段。列が細いので字を詰める */
+.dv-col-head.is-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 0;
+  line-height: 1.15;
+}
+.dv-dow { font-size: 10.5px; }
+.dv-dnum { font-size: 13px; font-weight: 600; color: var(--text); }
+.dv-col-head.is-sat { background: var(--sat-bg); }
+.dv-col-head.is-sat .dv-dow,
+.dv-col-head.is-sat .dv-dnum { color: var(--sat); }
+.dv-col-head.is-sun { background: var(--sun-bg); }
+.dv-col-head.is-sun .dv-dow,
+.dv-col-head.is-sun .dv-dnum { color: var(--sun); }
+.dv-col-head.is-today { box-shadow: inset 0 -2px 0 var(--accent); }
+
+.detail-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 40px;
+}
+
+/* ---------- 項目の見出し ---------- */
+.dv-group + .dv-group { margin-top: 18px; }
+.dv-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 6px;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 2;
+}
+.dv-group-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.dv-group-name { font-weight: 700; font-size: 14px; }
+.dv-group-tag { font-size: 12px; color: var(--muted); }
+
+.dv-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 10px 10px 14px calc(var(--dv-head-w) + 10px);
+  margin: 0;
+}
+
+/* ---------- 中タスク1つぶんのブロック ---------- */
+/* 上に中タスクのバー、その真下に、期間だけを点線で囲った縄張り。
+   その中に小タスクを置く */
+.dv-block {
+  display: grid;
+  grid-template-columns: var(--dv-head-w) 1fr;
+  align-items: stretch;
+  border-top: 1px solid var(--border);
+}
+
+.dv-block-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 12px 10px 10px;
+  min-width: 0;
+}
+.dv-block-dot { width: 9px; height: 9px; border-radius: 3px; margin-top: 5px; flex: none; }
+.dv-task-name {
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: break-word;
+  cursor: text;
+  flex: 1;
+  min-width: 0;
+}
+.dv-sub-count {
+  font-size: 11.5px;
+  color: var(--muted);
+  background: #eef1f5;
+  border-radius: 9px;
+  padding: 1px 7px;
+  margin-top: 2px;
+  flex: none;
+}
+.dv-name-input {
+  font: inherit;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #d5dae1;
+  border-radius: 4px;
+  padding: 1px 4px;
+  outline: none;
+}
+
+.dv-block-body {
+  position: relative;
+  padding: 6px 0 8px;
+}
+
+/* 列の区切りと、土日祝・今日の下地 */
+.dv-grid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  pointer-events: none;
+}
+.dv-gridline { border-left: 1px solid var(--border); }
+.dv-gridline.is-sat { background: rgba(62, 124, 177, .05); }
+.dv-gridline.is-sun { background: rgba(192, 85, 79, .05); }
+.dv-gridline.is-today { background: rgba(62, 124, 177, .09); }
+
+.dv-task-lane {
+  position: relative;
+  height: var(--lane-h);
+}
+
+/* 中タスクのバー。日の目盛りの上では動かせないので、掴む見た目にしない */
+.dv-task-bar { top: 0; }
+.dv-task-bar.is-fixed { cursor: default; }
+.dv-task-bar.is-fixed:active { cursor: default; }
+.dv-bar-range {
+  font-size: 11.5px;
+  opacity: .65;
+  pointer-events: none;
+  flex: none;
+}
+
+/* ---------- 小タスクの置き場 ---------- */
+.dv-sub-area { position: relative; margin-top: 4px; }
+
+/* 中タスクの期間だけを点線で囲う。この中が小タスクの縄張り */
+.dv-scope {
+  position: absolute;
+  top: 0;
+  bottom: 6px;
+  border-left: 1px dashed #c3cad3;
+  border-right: 1px dashed #c3cad3;
+  border-bottom: 1px dashed #c3cad3;
+  border-radius: 0 0 6px 6px;
+  background: rgba(15, 23, 42, .022);
+  pointer-events: none;
+}
+
+.dv-sub-cells {
+  position: absolute;
+  inset: 0 0 6px;
+  display: grid;
+}
+.dv-sub-cell { cursor: pointer; }
+.dv-sub-cell:hover { background: rgba(62, 124, 177, .07); }
+/* 中タスクの期間の外は、小タスクを置く場所ではないので反応させない */
+.dv-sub-cell.is-outside { cursor: default; pointer-events: none; }
+
+.dv-sub-bars { position: relative; pointer-events: none; }
+
+.dv-sub-bar {
+  height: var(--dv-sub-h);
+  font-size: 13px;
+  padding: 0 8px 0 10px;
+  border-radius: 6px;
+}
+.dv-sub-bar input {
+  width: 100%;
+  border: none;
+  background: rgba(255, 255, 255, .85);
+  border-radius: 4px;
+  padding: 2px 5px;
+  font: inherit;
+  color: var(--text);
+  outline: none;
+}

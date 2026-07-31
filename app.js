@@ -214,6 +214,8 @@ const History = (() => {
 // ==========================================================
 // selection: { kind:'cell', groupId, monthIdx } | { kind:'task', id } | { kind:'subtask', id }
 let selection = null;
+// 詳細ビューで開く対象として、項目の左のチェック欄で選んだもの
+const checkedGroupIds = new Set();
 // clipboard: { mode:'copy'|'cut', kind:'task'|'subtask', data:… }
 let clipboard = null;
 
@@ -223,23 +225,30 @@ function setSelection(sel) {
 }
 function clearSelection() { setSelection(null); }
 
+// 選択・切り取りの見た目を当てる先。詳細ビューも同じ選択状態を共有する
+const paintRoots = () => [groupListEl, calEl, popoverEl, $('detailBody')].filter(Boolean);
+
 // 選択の見た目を当て直す（描画のたびに呼ぶ）
 function paintSelection() {
-  groupListEl.querySelectorAll('.is-selected').forEach(el => el.classList.remove('is-selected'));
-  calEl.querySelectorAll('.is-selected').forEach(el => el.classList.remove('is-selected'));
-  popoverEl.querySelectorAll('.is-selected').forEach(el => el.classList.remove('is-selected'));
+  for (const root of paintRoots()) {
+    root.querySelectorAll('.is-selected').forEach(el => el.classList.remove('is-selected'));
+  }
   if (!selection) return;
 
   if (selection.kind === 'task') {
-    const b = findBar(selection.id);
-    if (b) b.classList.add('is-selected');
+    for (const root of paintRoots()) {
+      root.querySelectorAll(`.bar[data-task-id="${selection.id}"]`)
+        .forEach(el => el.classList.add('is-selected'));
+    }
   } else if (selection.kind === 'cell') {
     const cell = groupListEl.querySelector(
       `.group-row[data-group-id="${selection.groupId}"] .cell[data-month="${selection.monthIdx}"]`);
     if (cell) cell.classList.add('is-selected');
   } else if (selection.kind === 'subtask') {
-    calEl.querySelectorAll(`.cal-bar[data-sub-id="${selection.id}"]`)
-      .forEach(el => el.classList.add('is-selected'));
+    for (const root of paintRoots()) {
+      root.querySelectorAll(`[data-sub-id="${selection.id}"]`)
+        .forEach(el => el.classList.add('is-selected'));
+    }
     const li = popoverEl.querySelector(`.sub-item[data-id="${selection.id}"]`);
     if (li) li.classList.add('is-selected');
   }
@@ -247,15 +256,15 @@ function paintSelection() {
 
 // 切り取り中のものを薄く見せる
 function paintClipboard() {
-  groupListEl.querySelectorAll('.is-cutting').forEach(el => el.classList.remove('is-cutting'));
-  calEl.querySelectorAll('.is-cutting').forEach(el => el.classList.remove('is-cutting'));
+  for (const root of paintRoots()) {
+    root.querySelectorAll('.is-cutting').forEach(el => el.classList.remove('is-cutting'));
+  }
   if (!clipboard || clipboard.mode !== 'cut') return;
-  if (clipboard.kind === 'task') {
-    const b = findBar(clipboard.data.task.id);
-    if (b) b.classList.add('is-cutting');
-  } else {
-    calEl.querySelectorAll(`.cal-bar[data-sub-id="${clipboard.data.sub.id}"]`)
-      .forEach(el => el.classList.add('is-cutting'));
+  const sel = clipboard.kind === 'task'
+    ? `.bar[data-task-id="${clipboard.data.task.id}"]`
+    : `[data-sub-id="${clipboard.data.sub.id}"]`;
+  for (const root of paintRoots()) {
+    root.querySelectorAll(sel).forEach(el => el.classList.add('is-cutting'));
   }
 }
 
@@ -310,19 +319,23 @@ function pasteTaskAt(groupId, monthIdx) {
   render();
 }
 
-// 小タスクをカレンダーの日付へ貼る。長さは保ったまま開始日だけ変える
-function pasteSubtaskAt(iso) {
+// 小タスクを日付へ貼る。長さは保ったまま開始日だけ変える。
+// 詳細ビューのように「どの中タスクの下に貼るか」が決まっている場所からは taskId を渡す
+function pasteSubtaskAt(iso, taskId = null) {
   if (!clipboard || clipboard.kind !== 'subtask') return;
   const { sub } = clipboard.data;
   const mode = clipboard.mode;
   const len = sub.startDate && sub.endDate ? dayDiff(sub.startDate, sub.endDate) : 0;
+  const target = taskId || sub.taskId;
 
   History.act(mode === 'cut' ? '移動' : '貼り付け', () => {
     if (mode === 'cut') {
-      Store.updateSubtask(sub.id, { startDate: iso, endDate: addDays(iso, len) });
+      Store.updateSubtask(sub.id, {
+        taskId: target, startDate: iso, endDate: addDays(iso, len),
+      });
     } else {
       Store.addSubtask({
-        taskId: sub.taskId, name: sub.name,
+        taskId: target, name: sub.name,
         startDate: iso, endDate: addDays(iso, len),
       });
     }
@@ -376,12 +389,45 @@ function assignLanes(items) {
 // ==========================================================
 function render() {
   applyViewMode();
-  if (viewMode === 'day') { hidePopover(); renderDayView(); return; }
+  renderSelectBar();
+  if (viewMode === 'day') {
+    hidePopover();
+    renderDayView();
+    if (dvOpen) renderDetail();
+    return;
+  }
   renderMonthHeader();
   renderGroups();
+  if (dvOpen) renderDetail();
   if (popoverTaskId) renderPopoverBody();
   paintSelection();
   paintClipboard();
+}
+
+// チェックした項目に対する操作の帯。
+// 出したり消したりすると表が上下に動くので、高さは常に確保しておく
+function renderSelectBar() {
+  // 消えた項目や、いま見ていない側（仕事／プライベート）の項目は対象から外す
+  for (const id of [...checkedGroupIds]) {
+    const g = Store.group(id);
+    if (!g || !inScope(g)) checkedGroupIds.delete(id);
+  }
+  const n = checkedGroupIds.size;
+  $('selectHint').hidden = n > 0;
+  $('selectHint').textContent = '項目の左のチェックを入れると、まとめて詳細を見られます。';
+  $('selectCount').hidden = n === 0;
+  $('selectCount').textContent = `${n}件を選択中`;
+  $('selectDetail').hidden = n === 0;
+  $('selectClear').hidden = n === 0;
+}
+
+function clearCheckedGroups() {
+  checkedGroupIds.clear();
+  renderSelectBar();
+  groupListEl.querySelectorAll('.group-check').forEach(c => {
+    c.checked = false;
+    c.closest('.group-head').classList.remove('is-checked');
+  });
 }
 
 function applyViewMode() {
@@ -481,6 +527,23 @@ function buildGroupHead(g, row) {
   const head = document.createElement('div');
   head.className = 'group-head';
 
+  // 一番左のチェック欄。入れた項目を「詳細を見る」でまとめて開く。
+  // 普段は見えず、行にマウスを乗せたときと、チェック済みのときだけ出す
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.className = 'group-check';
+  check.checked = checkedGroupIds.has(g.id);
+  check.title = '詳細を見る対象に選ぶ';
+  head.classList.toggle('is-checked', check.checked);
+  check.addEventListener('click', e => e.stopPropagation());
+  check.addEventListener('change', () => {
+    if (check.checked) checkedGroupIds.add(g.id);
+    else checkedGroupIds.delete(g.id);
+    head.classList.toggle('is-checked', check.checked);
+    renderSelectBar();
+  });
+  head.appendChild(check);
+
   const grip = document.createElement('span');
   grip.className = 'group-grip';
   grip.textContent = '⠿';
@@ -505,14 +568,8 @@ function buildGroupHead(g, row) {
   meta.append(nameEl, tagEl);
   head.appendChild(meta);
 
-  // この項目に属する小タスクだけをカレンダーで見る
-  const cal = document.createElement('button');
-  cal.className = 'group-cal';
-  cal.type = 'button';
-  cal.innerHTML = ICON.calendar;
-  cal.title = 'この項目の予定をカレンダーで見る';
-  cal.addEventListener('click', () => openCalendarForGroup(g));
-  head.appendChild(cal);
+  // カレンダーのボタンはチェック欄に場所を譲って廃止した。
+  // 「この項目をカレンダーで見る」は右クリックメニューに残してある
 
   const eye = document.createElement('button');
   eye.className = 'group-eye';
@@ -729,7 +786,11 @@ function pickTaskColor(e, t, g) {
     });
 }
 
-const findBar = taskId => groupListEl.querySelector(`.bar[data-task-id="${taskId}"]`);
+// 詳細ビューを開いているあいだは、そちらのバーを先に探す
+// （吹き出しの出し直しや名前編集が、裏に隠れた一覧のバーに向かないように）
+const findBar = taskId =>
+  (dvOpen ? $('detailBody').querySelector(`.bar[data-task-id="${taskId}"]`) : null)
+  || groupListEl.querySelector(`.bar[data-task-id="${taskId}"]`);
 
 // ---------- 項目名のインライン編集 ----------
 function editGroupName(span, g) {
@@ -1909,6 +1970,758 @@ $('calendarOverlay').addEventListener('pointerdown', e => {
 });
 
 // ==========================================================
+// 詳細ビュー（選んだ項目の中身をガントで深く設計する）
+// ==========================================================
+// 一覧は「項目 × 月」で全体を俯瞰する場。ここは逆に、少数の項目だけを取り出して
+// 中身（中タスク・小タスク）を組み立てる場にする。
+//
+// 縦の並びは「中タスクごとのブロック」。上に中タスクのバー、その真下に、
+// 中タスクの期間だけを点線で囲った縄張りを作り、その中に小タスクを置く。
+// 中タスクをまとめて最上段に並べる形も考えたが、期間が重なると点線が交差して
+// 読めなくなるので、ブロックを縦に積む形にした。
+//
+// 横軸は表示によって単位が変わる:
+//   年・四半期 … 月のマス（中タスクを動かす場。小タスクは細かすぎるので出さない）
+//   月・週     … 日のマス（小タスクを組む場。中タスクは期間を示す屋根として置く）
+const DV_MODE_KEY = 'gantt-app:detail-mode';
+const DV_SUB_H = 26;      // 小タスクのバーの高さ（styles.css の --dv-sub-h と合わせる）
+const DV_SUB_GAP = 4;     // 同上 --dv-sub-gap
+
+let dvOpen = false;
+let dvGroupIds = [];
+let dvMode = localStorage.getItem(DV_MODE_KEY) || 'month';
+let dvFy = fy;
+let dvQuarter = quarter;
+let dvY = today.getFullYear();
+let dvM = today.getMonth() + 1;
+let dvWeekStart = startOfWeek(TODAY);
+
+function startOfWeek(iso) { return addDays(iso, -dowOf(iso)); }
+const fyOf = (y, m) => (m >= 4 ? y : y - 1);
+
+// いま出している横軸。month なら通し月番号、day なら通し日番号で範囲を持つ
+function dvAxis() {
+  if (dvMode === 'year' || dvMode === 'quarter') {
+    const idxFrom = dvMode === 'quarter' ? dvQuarter * 3 : 0;
+    const idxTo = dvMode === 'quarter' ? dvQuarter * 3 + 2 : 11;
+    const a = idxToYM(dvFy, idxFrom);
+    const b = idxToYM(dvFy, idxTo);
+    return {
+      unit: 'month', idxFrom, idxTo,
+      from: absMonth(a.y, a.m), to: absMonth(b.y, b.m),
+      count: idxTo - idxFrom + 1,
+    };
+  }
+  const start = dvMode === 'month' ? ymd(dvY, dvM, 1) : dvWeekStart;
+  const end = dvMode === 'month' ? ymd(dvY, dvM, daysInMonth(dvY, dvM)) : addDays(dvWeekStart, 6);
+  return { unit: 'day', start, end, from: ord(start), to: ord(end), count: dayDiff(start, end) + 1 };
+}
+
+// 中タスクの期間を、いまの横軸の単位に直す
+function dvTaskSpan(t, axis) {
+  const a = idxToYM(t.fy, t.startMonth);
+  const b = idxToYM(t.fy, t.endMonth);
+  if (axis.unit === 'month') return { from: absMonth(a.y, a.m), to: absMonth(b.y, b.m) };
+  return { from: ord(ymd(a.y, a.m, 1)), to: ord(ymd(b.y, b.m, daysInMonth(b.y, b.m))) };
+}
+
+// バーの位置と幅を、表示範囲で切り取って反映する（一覧の applyBarGeometry の横軸一般化版）
+function dvPlace(el, span, axis) {
+  const from = Math.max(span.from, axis.from);
+  const to = Math.min(span.to, axis.to);
+  const clipL = span.from < axis.from;
+  const clipR = span.to > axis.to;
+  const insL = clipL ? 0 : 3;
+  const insR = clipR ? 0 : 3;
+  el.style.left = `calc(${((from - axis.from) / axis.count) * 100}% + ${insL}px)`;
+  el.style.width = `calc(${((to - from + 1) / axis.count) * 100}% - ${insL + insR}px)`;
+  el.classList.toggle('clip-left', clipL);
+  el.classList.toggle('clip-right', clipR);
+}
+
+// 表示範囲にかかる中タスクを集める。
+// 週や月の表示は年度をまたぐことがあるので、かかる年度を両方見る
+function dvTasksOf(groupId, axis) {
+  const years = new Set();
+  if (axis.unit === 'month') years.add(dvFy);
+  else {
+    const a = parseDate(axis.start);
+    const b = parseDate(axis.end);
+    years.add(fyOf(a.y, a.m));
+    years.add(fyOf(b.y, b.m));
+  }
+  const out = [];
+  for (const y of years) {
+    for (const t of Store.tasksOf(groupId, y)) {
+      const sp = dvTaskSpan(t, axis);
+      if (sp.to >= axis.from && sp.from <= axis.to) out.push({ t, sp });
+    }
+  }
+  return out.sort((x, y) => x.sp.from - y.sp.from || x.sp.to - y.sp.to);
+}
+
+// ---------- 開閉と期間の移動 ----------
+function openDetail() {
+  const targets = Store.groupsIn(scopeMode).filter(g => checkedGroupIds.has(g.id));
+  if (!targets.length) return;
+  dvGroupIds = targets.map(g => g.id);
+  dvFy = fy;
+  dvQuarter = quarter;
+  dvOpen = true;
+  hidePopover();
+  $('detailOverlay').hidden = false;
+  renderDetail();
+}
+
+function closeDetail() {
+  dvOpen = false;
+  $('detailOverlay').hidden = true;
+  hidePopover();
+  render();
+}
+
+function dvRangeLabel() {
+  if (dvMode === 'year') return `${dvFy}年度`;
+  if (dvMode === 'quarter') {
+    return `${dvFy}年度 ${MONTH_LABELS[dvQuarter * 3]}〜${MONTH_LABELS[dvQuarter * 3 + 2]}`;
+  }
+  if (dvMode === 'month') return `${dvY}年${dvM}月`;
+  const e = addDays(dvWeekStart, 6);
+  return `${fmtShort(dvWeekStart)}(${DOW[dowOf(dvWeekStart)]}) 〜 ${fmtShort(e)}(${DOW[dowOf(e)]})`;
+}
+
+function dvShift(delta) {
+  if (dvMode === 'year') dvFy += delta;
+  else if (dvMode === 'quarter') {
+    dvQuarter += delta;
+    while (dvQuarter > 3) { dvQuarter -= 4; dvFy++; }
+    while (dvQuarter < 0) { dvQuarter += 4; dvFy--; }
+  } else if (dvMode === 'month') {
+    const { y, m } = absToYM(absMonth(dvY, dvM) + delta);
+    dvY = y;
+    dvM = m;
+  } else {
+    dvWeekStart = addDays(dvWeekStart, delta * 7);
+  }
+  renderDetail();
+}
+
+function dvGoToday() {
+  dvFy = currentFiscalYear();
+  dvQuarter = Math.floor((ymToIdx(dvFy, today.getFullYear(), today.getMonth() + 1) || 0) / 3);
+  dvY = today.getFullYear();
+  dvM = today.getMonth() + 1;
+  dvWeekStart = startOfWeek(TODAY);
+  renderDetail();
+}
+
+// 今日を含む期間を出しているか
+function dvShowingToday() {
+  const axis = dvAxis();
+  if (axis.unit === 'day') return ord(TODAY) >= axis.from && ord(TODAY) <= axis.to;
+  const cur = absMonth(today.getFullYear(), today.getMonth() + 1);
+  return cur >= axis.from && cur <= axis.to;
+}
+
+// ---------- 描画 ----------
+function renderDetail() {
+  const groups = dvGroupIds.map(id => Store.group(id)).filter(Boolean);
+  if (!groups.length) { closeDetail(); return; }
+
+  const axis = dvAxis();
+
+  $('detailTitle').textContent = groups.length === 1
+    ? (groups[0].name || '（無題）')
+    : `${groups.length}件の項目`;
+  document.querySelectorAll('#detailToggle button').forEach(b => {
+    b.classList.toggle('is-active', b.dataset.dv === dvMode);
+  });
+  $('dvRangeLabel').textContent = dvRangeLabel();
+  $('dvToday').classList.toggle('is-current', dvShowingToday());
+  $('detailNote').textContent = axis.unit === 'month'
+    ? '小タスクは「月」「週」で出ます'
+    : '中タスクの期間は「年」「四半期」で変えられます';
+
+  renderDetailAxis(axis);
+
+  const body = $('detailBody');
+  body.innerHTML = '';
+  for (const g of groups) {
+    const sec = document.createElement('section');
+    sec.className = 'dv-group';
+
+    const gh = document.createElement('div');
+    gh.className = 'dv-group-head';
+    const dot = document.createElement('span');
+    dot.className = 'dv-group-dot';
+    dot.style.background = g.color;
+    const name = document.createElement('span');
+    name.className = 'dv-group-name';
+    name.textContent = g.name || '（無題）';
+    const tag = document.createElement('span');
+    tag.className = 'dv-group-tag';
+    tag.textContent = TAG_LABEL[g.tag];
+    gh.append(dot, name, tag);
+    sec.appendChild(gh);
+
+    const list = dvTasksOf(g.id, axis);
+    if (!list.length) {
+      const p = document.createElement('p');
+      p.className = 'dv-empty';
+      p.textContent = 'この期間に中タスクはありません。';
+      sec.appendChild(p);
+    }
+    for (const x of list) sec.appendChild(dvBuildBlock(x.t, g, x.sp, axis));
+    body.appendChild(sec);
+  }
+
+  paintSelection();
+  paintClipboard();
+}
+
+function renderDetailAxis(axis) {
+  const el = $('detailAxis');
+  el.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.className = 'dv-axis-head';
+  head.textContent = axis.unit === 'month' ? '中タスク' : '中タスク / 小タスク';
+  el.appendChild(head);
+
+  const cols = document.createElement('div');
+  cols.className = 'dv-axis-cols';
+  cols.style.gridTemplateColumns = `repeat(${axis.count}, 1fr)`;
+
+  if (axis.unit === 'month') {
+    const curIdx = ymToIdx(dvFy, today.getFullYear(), today.getMonth() + 1);
+    for (let i = axis.idxFrom; i <= axis.idxTo; i++) {
+      const c = document.createElement('div');
+      c.className = 'dv-col-head' + (i === curIdx ? ' is-current' : '');
+      c.textContent = MONTH_LABELS[i];
+      c.title = 'クリックでこの月のカレンダー';
+      c.addEventListener('click', () => openCalendar({ ...idxToYM(dvFy, i) }));
+      cols.appendChild(c);
+    }
+  } else {
+    for (let i = 0; i < axis.count; i++) {
+      const iso = addDays(axis.start, i);
+      const kind = dayKind(iso);
+      const c = document.createElement('div');
+      c.className = 'dv-col-head is-day'
+        + (kind ? ' is-' + kind : '')
+        + (iso === TODAY ? ' is-today' : '');
+      const dow = document.createElement('span');
+      dow.className = 'dv-dow';
+      dow.textContent = DOW[dowOf(iso)];
+      const num = document.createElement('span');
+      num.className = 'dv-dnum';
+      num.textContent = parseDate(iso).d;
+      c.append(dow, num);
+      const hol = Holidays.name(iso);
+      if (hol) c.title = hol;
+      cols.appendChild(c);
+    }
+  }
+  el.appendChild(cols);
+}
+
+// 中タスク1つぶんのブロック（上＝中タスクのバー、下＝その縄張りと小タスク）
+function dvBuildBlock(t, g, sp, axis) {
+  const block = document.createElement('div');
+  block.className = 'dv-block';
+  block.dataset.taskId = t.id;
+
+  // --- 左の見出し ---
+  const head = document.createElement('div');
+  head.className = 'dv-block-head';
+  const dot = document.createElement('span');
+  dot.className = 'dv-block-dot';
+  dot.style.background = taskColor(t, g);
+  const name = document.createElement('span');
+  name.className = 'dv-task-name';
+  name.textContent = t.name || '（無題）';
+  name.title = 'クリックで名前を変更';
+  name.addEventListener('click', () => dvEditTaskName(name, t));
+  head.append(dot, name);
+  const subCount = Store.subtasksOf(t.id).length;
+  if (subCount) {
+    const c = document.createElement('span');
+    c.className = 'dv-sub-count';
+    c.textContent = subCount;
+    c.title = `小タスク ${subCount}件`;
+    head.appendChild(c);
+  }
+  block.appendChild(head);
+
+  // --- 右の本体 ---
+  const bodyEl = document.createElement('div');
+  bodyEl.className = 'dv-block-body';
+
+  const grid = document.createElement('div');
+  grid.className = 'dv-grid';
+  grid.style.gridTemplateColumns = `repeat(${axis.count}, 1fr)`;
+  const curIdx = ymToIdx(dvFy, today.getFullYear(), today.getMonth() + 1);
+  for (let i = 0; i < axis.count; i++) {
+    const c = document.createElement('div');
+    c.className = 'dv-gridline';
+    if (axis.unit === 'day') {
+      const iso = addDays(axis.start, i);
+      const kind = dayKind(iso);
+      if (kind) c.classList.add('is-' + kind);
+      if (iso === TODAY) c.classList.add('is-today');
+    } else if (axis.idxFrom + i === curIdx) {
+      c.classList.add('is-today');
+    }
+    grid.appendChild(c);
+  }
+  bodyEl.appendChild(grid);
+
+  const lane = document.createElement('div');
+  lane.className = 'dv-task-lane';
+  lane.appendChild(dvBuildTaskBar(t, g, sp, axis));
+  bodyEl.appendChild(lane);
+
+  // 小タスクは日の目盛りがあるとき（月・週）だけ出す
+  if (axis.unit === 'day') bodyEl.appendChild(dvBuildSubArea(t, g, sp, axis));
+
+  block.appendChild(bodyEl);
+  return block;
+}
+
+function dvBuildTaskBar(t, g, sp, axis) {
+  const subCount = Store.subtasksOf(t.id).length;
+  const { bg, fg, accent } = barStyle(taskColor(t, g), subCount);
+
+  const bar = document.createElement('div');
+  bar.className = 'bar dv-task-bar';
+  bar.dataset.taskId = t.id;
+  bar.style.background = bg;
+  bar.style.color = fg;
+  bar.style.setProperty('--accent-color', accent);
+  dvPlace(bar, sp, axis);
+
+  const label = document.createElement('span');
+  label.className = 'label';
+  label.textContent = t.name || '（無題）';
+  bar.appendChild(label);
+
+  // 何月から何月かは、日の目盛り（月・週）のときだけ添える。
+  // 月の目盛り（年・四半期）では列の見出しを見れば分かるうえ、
+  // 1ヶ月ぶんの短いバーだと名前を押し出して切ってしまう
+  if (axis.unit === 'day') {
+    const range = document.createElement('span');
+    range.className = 'dv-bar-range';
+    range.textContent = t.startMonth === t.endMonth
+      ? MONTH_LABELS[t.startMonth]
+      : `${MONTH_LABELS[t.startMonth]}〜${MONTH_LABELS[t.endMonth]}`;
+    bar.appendChild(range);
+  }
+
+  bar.dataset.tipPath = g.name || '（無題）';
+  bar.dataset.tipName = t.name || '（無題）';
+
+  // 中タスクは月の単位のものなので、月の目盛りがあるとき（年・四半期）だけ動かせる。
+  // 日の目盛りの上では、期間を示す屋根として置くだけにする
+  if (axis.unit === 'month') {
+    for (const side of ['left', 'right']) {
+      const h = document.createElement('span');
+      h.className = 'handle ' + side;
+      h.dataset.side = side;
+      bar.appendChild(h);
+    }
+    bar.addEventListener('pointerdown', e => dvStartTaskDrag(e, t, bar, axis));
+  } else {
+    bar.classList.add('is-fixed');
+    bar.title = '期間を変えるときは「年」「四半期」で';
+    bar.addEventListener('pointerdown', e => {
+      if (e.button === 0 && e.target.tagName !== 'INPUT') setSelection({ kind: 'task', id: t.id });
+    });
+  }
+
+  bar.addEventListener('dblclick', e => {
+    e.stopPropagation();
+    showPopover(t.id, bar);
+  });
+
+  bar.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelection({ kind: 'task', id: t.id });
+    const items = [
+      {
+        label: '名前を変更',
+        onClick: () => {
+          const n = bar.closest('.dv-block').querySelector('.dv-task-name');
+          if (n) dvEditTaskName(n, t);
+        },
+      },
+      { label: '小タスクを開く', onClick: () => showPopover(t.id, bar) },
+      { label: 'カレンダーで見る', onClick: () => openCalendar({ ...idxToYM(t.fy, t.startMonth), taskId: t.id }) },
+      { label: '色を変更', onClick: () => pickTaskColor(e, t, g) },
+      { separator: true },
+      { label: 'コピー', onClick: () => putTaskOnClipboard(t, 'copy') },
+      { label: '切り取り', onClick: () => putTaskOnClipboard(t, 'cut') },
+    ];
+    if (clipboard && clipboard.kind === 'task') {
+      items.push({ label: '貼り付け', onClick: () => pasteTaskAt(t.groupId, t.startMonth) });
+    }
+    items.push({ separator: true });
+    items.push({
+      label: '削除', danger: true,
+      onClick: () => {
+        History.act('削除', () => {
+          if (popoverTaskId === t.id) hidePopover();
+          Store.deleteTask(t.id);
+        });
+        clearSelection();
+        render();
+      },
+    });
+    openContextMenu(e, t.name || '（無題）', items.concat(undoMenuItems()));
+  });
+
+  return bar;
+}
+
+// 中タスクの真下。期間だけを点線で囲って、その中に小タスクを置く
+function dvBuildSubArea(t, g, sp, axis) {
+  const area = document.createElement('div');
+  area.className = 'dv-sub-area';
+
+  const scope = document.createElement('div');
+  scope.className = 'dv-scope';
+  dvPlace(scope, sp, axis);
+  area.appendChild(scope);
+
+  const cells = document.createElement('div');
+  cells.className = 'dv-sub-cells';
+  cells.style.gridTemplateColumns = `repeat(${axis.count}, 1fr)`;
+  for (let i = 0; i < axis.count; i++) {
+    const iso = addDays(axis.start, i);
+    const inside = ord(iso) >= sp.from && ord(iso) <= sp.to;
+    const c = document.createElement('div');
+    c.className = 'dv-sub-cell' + (inside ? '' : ' is-outside');
+    if (inside) {
+      c.title = 'ダブルクリックで小タスクを作る';
+      c.addEventListener('dblclick', () => dvCreateSubtask(t, iso));
+      c.addEventListener('contextmenu', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        const items = [{ label: 'ここに小タスクを作る', onClick: () => dvCreateSubtask(t, iso) }];
+        if (clipboard && clipboard.kind === 'subtask') {
+          items.push({ label: '貼り付け', onClick: () => pasteSubtaskAt(iso, t.id) });
+        }
+        openContextMenu(e, `${t.name || '（無題）'} / ${fmtShort(iso)}`, items.concat(undoMenuItems()));
+      });
+    }
+    cells.appendChild(c);
+  }
+  area.appendChild(cells);
+
+  const items = Store.subtasksOf(t.id)
+    .filter(s => s.startDate)
+    .map(s => ({ s, from: ord(s.startDate), to: ord(s.endDate || s.startDate) }))
+    .filter(x => x.to >= axis.from && x.from <= axis.to);
+  const { sorted, laneCount } = assignLanes(items);
+
+  const bars = document.createElement('div');
+  bars.className = 'dv-sub-bars';
+  const h = laneCount * DV_SUB_H + (laneCount - 1) * DV_SUB_GAP;
+  bars.style.height = h + 'px';
+  for (const x of sorted) bars.appendChild(dvBuildSubBar(x.s, t, g, x, axis));
+  area.appendChild(bars);
+  area.style.height = (h + 14) + 'px';
+
+  return area;
+}
+
+function dvBuildSubBar(s, t, g, x, axis) {
+  const { bg, fg, accent } = calBarStyle(taskColor(t, g));
+
+  const bar = document.createElement('div');
+  bar.className = 'bar dv-sub-bar';
+  bar.dataset.subId = s.id;
+  bar.style.background = bg;
+  bar.style.color = fg;
+  bar.style.setProperty('--accent-color', accent);
+  bar.style.top = x.lane * (DV_SUB_H + DV_SUB_GAP) + 'px';
+  dvPlace(bar, { from: x.from, to: x.to }, axis);
+
+  const label = document.createElement('span');
+  label.className = 'label';
+  label.textContent = s.name || '（無題）';
+  bar.appendChild(label);
+
+  bar.dataset.tipPath = `${g.name || '（無題）'} › ${t.name || '（無題）'}`;
+  bar.dataset.tipName = `${s.name || '（無題）'}　${rangeText(s)}`;
+
+  for (const side of ['left', 'right']) {
+    const h = document.createElement('span');
+    h.className = 'handle ' + side;
+    h.dataset.side = side;
+    bar.appendChild(h);
+  }
+
+  bar.addEventListener('pointerdown', e => dvStartSubDrag(e, s, bar, axis));
+  bar.addEventListener('dblclick', e => {
+    e.stopPropagation();
+    dvEditSubName(bar, s);
+  });
+
+  bar.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelection({ kind: 'subtask', id: s.id });
+    const items = [
+      { label: '名前を変更', onClick: () => dvEditSubName(bar, s) },
+      { label: 'カレンダーで見る', onClick: () => openCalendar({ ...calendarMonthFor(s, t), taskId: t.id }) },
+      { separator: true },
+      { label: 'コピー', onClick: () => putSubtaskOnClipboard(s, 'copy') },
+      { label: '切り取り', onClick: () => putSubtaskOnClipboard(s, 'cut') },
+    ];
+    if (clipboard && clipboard.kind === 'subtask' && s.startDate) {
+      items.push({ label: '貼り付け', onClick: () => pasteSubtaskAt(s.startDate, t.id) });
+    }
+    items.push({ separator: true });
+    items.push({
+      label: '削除', danger: true,
+      onClick: () => {
+        History.act('削除', () => Store.deleteSubtask(s.id));
+        clearSelection();
+        render();
+      },
+    });
+    openContextMenu(e, s.name || '（無題）', items.concat(undoMenuItems()));
+  });
+
+  return bar;
+}
+
+// ---------- 詳細ビューの操作 ----------
+function dvCreateSubtask(t, iso) {
+  const s = History.act('小タスクの作成', () =>
+    Store.addSubtask({ taskId: t.id, startDate: iso, endDate: iso }));
+  setSelection({ kind: 'subtask', id: s.id });
+  render();
+  const bar = $('detailBody').querySelector(`.dv-sub-bar[data-sub-id="${s.id}"]`);
+  if (bar) dvEditSubName(bar, s);
+}
+
+function dvEditTaskName(span, t) {
+  if (!span) return;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = t.name;
+  input.className = 'dv-name-input';
+  input.placeholder = 'タスク名';
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const commit = cancel => {
+    if (done) return;
+    done = true;
+    const v = input.value.trim();
+    if (!cancel && v && v !== t.name) History.act('名前の変更', () => Store.updateTask(t.id, { name: v }));
+    render();
+  };
+  input.addEventListener('blur', () => commit(false));
+  input.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') commit(false);
+    if (e.key === 'Escape') commit(true);
+  });
+}
+
+function dvEditSubName(bar, s) {
+  const cur = Store.subtask(s.id);
+  if (!bar || !cur) return;
+  bar.innerHTML = '';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = cur.name;
+  input.placeholder = '小タスク名';
+  bar.appendChild(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = cancel => {
+    if (done) return;
+    done = true;
+    const v = input.value.trim();
+    // 名前を入れずに終わったら、作ったことをなかったことにする
+    if (!v && !cur.name) Store.deleteSubtask(cur.id);
+    else if (!cancel && v && v !== cur.name) {
+      History.act('名前の変更', () => Store.updateSubtask(cur.id, { name: v }));
+    }
+    render();
+    if (!$('calendarOverlay').hidden) renderCalendar();
+  };
+  input.addEventListener('blur', () => finish(false));
+  input.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') finish(false);
+    if (e.key === 'Escape') finish(true);
+  });
+  input.addEventListener('pointerdown', e => e.stopPropagation());
+}
+
+// 中タスクのドラッグ（月の単位。年・四半期のときだけ）
+function dvStartTaskDrag(e, t, bar, axis) {
+  if (e.button !== 0) return;
+  if (e.target.tagName === 'INPUT') return;
+  e.stopPropagation();
+
+  const mode = e.target.dataset.side ? 'resize-' + e.target.dataset.side : 'move';
+  const duplicating = mode === 'move' && isDuplicateDrag(e);
+  const track = bar.closest('.dv-block-body');
+  const cellW = track.getBoundingClientRect().width / axis.count;
+  const startX = e.clientX;
+  const orig = { s: t.startMonth, e: t.endMonth };
+  let moved = false;
+  let next = { ...orig };
+
+  bar.setPointerCapture(e.pointerId);
+
+  const onMove = ev => {
+    if (Math.abs(ev.clientX - startX) > 3) moved = true;
+    if (!moved) return;
+    bar.classList.add('is-dragging');
+    const delta = Math.round((ev.clientX - startX) / cellW);
+    if (mode === 'move') {
+      const span = orig.e - orig.s;
+      const s = Math.min(Math.max(orig.s + delta, 0), 11 - span);
+      next = { s, e: s + span };
+    } else if (mode === 'resize-left') {
+      const s = Math.min(Math.max(orig.s + delta, 0), orig.e);
+      next = { s, e: orig.e };
+    } else {
+      const en = Math.max(Math.min(orig.e + delta, 11), orig.s);
+      next = { s: orig.s, e: en };
+    }
+    dvPlace(bar, dvTaskSpan({ ...t, startMonth: next.s, endMonth: next.e }, axis), axis);
+  };
+
+  const onUp = () => {
+    bar.removeEventListener('pointermove', onMove);
+    bar.removeEventListener('pointerup', onUp);
+    bar.classList.remove('is-dragging');
+    if (!moved) { setSelection({ kind: 'task', id: t.id }); return; }
+
+    if (next.s !== orig.s || next.e !== orig.e) {
+      if (duplicating) {
+        History.act('複製', () => {
+          const nt = Store.addTask({
+            groupId: t.groupId, fy: t.fy,
+            startMonth: next.s, endMonth: next.e,
+            name: t.name, color: t.color,
+          });
+          const delta = next.s - orig.s;
+          for (const s of Store.subtasksOf(t.id)) {
+            Store.addSubtask({
+              taskId: nt.id, name: s.name,
+              startDate: s.startDate ? shiftDateByMonths(s.startDate, delta) : null,
+              endDate: s.endDate ? shiftDateByMonths(s.endDate, delta) : null,
+            });
+          }
+          setSelection({ kind: 'task', id: nt.id });
+        });
+      } else {
+        History.act(mode === 'move' ? '移動' : '期間の変更', () => {
+          Store.updateTask(t.id, { startMonth: next.s, endMonth: next.e });
+          if (mode === 'move') shiftSubtasks(t.id, next.s - orig.s);
+          else gatherStraySubtasks(Store.task(t.id));
+        });
+      }
+    }
+    render();
+  };
+
+  bar.addEventListener('pointermove', onMove);
+  bar.addEventListener('pointerup', onUp);
+}
+
+// 小タスクのドラッグ（日の単位）
+function dvStartSubDrag(e, s, bar, axis) {
+  if (e.button !== 0) return;
+  if (e.target.tagName === 'INPUT') return;
+  e.stopPropagation();
+
+  const mode = e.target.dataset.side ? 'resize-' + e.target.dataset.side : 'move';
+  const duplicating = mode === 'move' && isDuplicateDrag(e);
+  const track = bar.closest('.dv-block-body');
+  const cellW = track.getBoundingClientRect().width / axis.count;
+  const startX = e.clientX;
+  const oa = s.startDate;
+  const ob = s.endDate || s.startDate;
+  let moved = false;
+  let next = { a: oa, b: ob };
+
+  bar.setPointerCapture(e.pointerId);
+
+  const onMove = ev => {
+    if (Math.abs(ev.clientX - startX) > 3) moved = true;
+    if (!moved) return;
+    bar.classList.add('is-dragging');
+    const d = Math.round((ev.clientX - startX) / cellW);
+    if (mode === 'move') {
+      next = { a: addDays(oa, d), b: addDays(ob, d) };
+    } else if (mode === 'resize-left') {
+      const a = addDays(oa, d);
+      next = { a: dateNum(a) > dateNum(ob) ? ob : a, b: ob };
+    } else {
+      const b = addDays(ob, d);
+      next = { a: oa, b: dateNum(b) < dateNum(oa) ? oa : b };
+    }
+    dvPlace(bar, { from: ord(next.a), to: ord(next.b) }, axis);
+  };
+
+  const onUp = () => {
+    bar.removeEventListener('pointermove', onMove);
+    bar.removeEventListener('pointerup', onUp);
+    bar.classList.remove('is-dragging');
+    if (!moved) { setSelection({ kind: 'subtask', id: s.id }); return; }
+
+    if (next.a !== oa || next.b !== ob) {
+      if (duplicating) {
+        History.act('複製', () => {
+          const ns = Store.addSubtask({
+            taskId: s.taskId, name: s.name, startDate: next.a, endDate: next.b,
+          });
+          setSelection({ kind: 'subtask', id: ns.id });
+        });
+      } else {
+        History.act(mode === 'move' ? '移動' : '期間の変更', () =>
+          Store.updateSubtask(s.id, { startDate: next.a, endDate: next.b }));
+      }
+    }
+    render();
+    if (!$('calendarOverlay').hidden) renderCalendar();
+  };
+
+  bar.addEventListener('pointermove', onMove);
+  bar.addEventListener('pointerup', onUp);
+}
+
+// ---------- 詳細ビューの配線 ----------
+$('selectDetail').addEventListener('click', openDetail);
+$('selectClear').addEventListener('click', clearCheckedGroups);
+$('detailClose').addEventListener('click', closeDetail);
+$('dvPrev').addEventListener('click', () => dvShift(-1));
+$('dvNext').addEventListener('click', () => dvShift(1));
+$('dvToday').addEventListener('click', dvGoToday);
+
+document.querySelectorAll('#detailToggle button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    dvMode = btn.dataset.dv;
+    localStorage.setItem(DV_MODE_KEY, dvMode);
+    hidePopover();
+    renderDetail();
+  });
+});
+
+// ==========================================================
 // 項目の追加ダイアログ
 // ==========================================================
 let dlgTag = 'routine';
@@ -2005,7 +2818,9 @@ $('nextRange').addEventListener('click', () => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (!menuEl.hidden) closeContextMenu();
+    // カレンダーは詳細ビューの上からも開けるので、先にカレンダーを閉じる
     else if (!$('calendarOverlay').hidden) closeCalendar();
+    else if (dvOpen) closeDetail();
     else if (!$('groupDialog').hidden) $('groupDialog').hidden = true;
     else if (clipboard) { clipboard = null; paintClipboard(); }
     else if (selection) clearSelection();

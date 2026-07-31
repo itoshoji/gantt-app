@@ -49,6 +49,14 @@
 
 <!-- ガントビュー（年 / 四半期） -->
 <main class="board" id="boardView">
+  <!-- チェックした項目に対する操作。高さは常に確保して、出入りで表が上下に動かないようにする -->
+  <div class="select-bar" id="selectBar">
+    <span class="select-hint" id="selectHint"></span>
+    <span class="select-count" id="selectCount" hidden></span>
+    <button type="button" class="btn primary select-detail" id="selectDetail" hidden>詳細を見る</button>
+    <button type="button" class="btn ghost select-clear" id="selectClear" hidden>選択を解除</button>
+  </div>
+
   <div class="row header-row">
     <div class="head-cell">項目</div>
     <div class="months" id="monthHeader"></div>
@@ -104,6 +112,35 @@
     </div>
     <p class="calendar-hint" id="calendarHint"></p>
     <div class="calendar" id="calendar"></div>
+  </div>
+</div>
+
+<!-- 詳細ビュー（選んだ項目の中身をガントで深く設計する） -->
+<div class="overlay" id="detailOverlay" hidden>
+  <div class="dialog detail-dialog">
+    <div class="detail-head">
+      <h2 class="dialog-title detail-title" id="detailTitle"></h2>
+
+      <div class="view-toggle" id="detailToggle">
+        <button type="button" data-dv="year">年</button>
+        <button type="button" data-dv="quarter">四半期</button>
+        <button type="button" data-dv="month">月</button>
+        <button type="button" data-dv="week">週</button>
+      </div>
+
+      <div class="range-nav">
+        <button class="icon-btn" id="dvPrev" title="前へ">‹</button>
+        <span id="dvRangeLabel" class="range-label"></span>
+        <button class="icon-btn" id="dvNext" title="次へ">›</button>
+      </div>
+      <button class="today-btn" id="dvToday" title="今日を含む期間へ">今日</button>
+
+      <span class="detail-note" id="detailNote"></span>
+      <button class="icon-btn" id="detailClose" title="閉じる">×</button>
+    </div>
+
+    <div class="detail-axis" id="detailAxis"></div>
+    <div class="detail-body" id="detailBody"></div>
   </div>
 </div>
 
